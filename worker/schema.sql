@@ -44,3 +44,7 @@ CREATE INDEX IF NOT EXISTS videos_paper ON videos (paper_key, created_at);
 CREATE TABLE IF NOT EXISTS quota (
   day TEXT NOT NULL, who TEXT NOT NULL, n INTEGER NOT NULL DEFAULT 0, PRIMARY KEY (day, who)
 );
+-- Fallback file store used until R2 is enabled (files up to ~1.9 MB)
+CREATE TABLE IF NOT EXISTS files (
+  key TEXT PRIMARY KEY, mime TEXT, data BLOB NOT NULL, size INTEGER, created_at TEXT NOT NULL
+);

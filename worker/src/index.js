@@ -61,14 +61,29 @@ const need = (u, what = 'signed') => {
 };
 const publicUser = u => u && ({ id: u.id, email: u.email, name: u.name, picture: u.picture, role: u.role, verified: u.verified, admin: u.admin, profile: u.profile });
 
-// ---------- files (R2) ----------
+// ---------- files: R2 when the FILES bucket is bound, otherwise D1 (files up to ~1.9 MB) ----------
+const D1_MAX = 1900000;
+async function putBytes(env, key, bin, mime) {
+  if (env.FILES) { await env.FILES.put(key, bin, { httpMetadata: { contentType: mime } }); return key; }
+  if (bin.length > D1_MAX) fail(413, 'Files over 1.9 MB need Evidara file storage (R2), which is not switched on yet. Please upload a smaller file.');
+  await env.DB.prepare('INSERT OR REPLACE INTO files (key, mime, data, size, created_at) VALUES (?1, ?2, ?3, ?4, ?5)').bind(key, mime, bin, bin.length, now()).run();
+  return key;
+}
+async function getFile(env, key, req) {
+  if (env.FILES) {
+    const range = req?.headers.get('Range');
+    const obj = await env.FILES.get(key, range ? { range: req.headers } : undefined);
+    return obj ? { body: obj.body, mime: obj.httpMetadata?.contentType, size: obj.size, range: range ? obj.range : null } : null;
+  }
+  const row = await env.DB.prepare('SELECT mime, data, size FROM files WHERE key = ?1').bind(key).first();
+  return row ? { body: new Uint8Array(row.data), mime: row.mime, size: row.size, range: null } : null;
+}
 async function putDataUrl(env, key, dataUrl, maxBytes) {
   const m = String(dataUrl || '').match(/^data:([\w/+.-]+);base64,(.+)$/);
   if (!m) fail(400, 'Bad file data');
   const bin = Uint8Array.from(atob(m[2]), c => c.charCodeAt(0));
   if (bin.length > maxBytes) fail(413, 'File too large');
-  await env.FILES.put(key, bin, { httpMetadata: { contentType: m[1] } });
-  return key;
+  return putBytes(env, key, bin, m[1]);
 }
 
 // ---------- handlers ----------
@@ -78,7 +93,7 @@ async function route(req, env, url, u) {
   const body = async (max = 2e6) => { const t = await req.text(); if (t.length > max) fail(413, 'Request too large'); try { return JSON.parse(t || '{}'); } catch { fail(400, 'Bad JSON'); } };
   const seg = p.split('/').filter(Boolean).map(decodeURIComponent);
 
-  if (p === '/health') return { ok: true, time: now(), ai: !!env.AI || env.MOCK_AI === '1', google: !!env.GOOGLE_CLIENT_ID };
+  if (p === '/health') return { ok: true, time: now(), ai: !!env.AI || env.MOCK_AI === '1', google: !!env.GOOGLE_CLIENT_ID, files: env.FILES ? 'r2' : 'd1', videos: !!env.FILES };
 
   // auth
   if (p === '/auth/google' && M === 'POST') {
@@ -191,8 +206,8 @@ async function route(req, env, url, u) {
     if (p === '/admin/file' && M === 'GET') {
       const key = url.searchParams.get('key') || '';
       if (!key.startsWith('priv/')) fail(400, 'Bad key');
-      const obj = await env.FILES.get(key); if (!obj) fail(404, 'Not found');
-      return new Response(obj.body, { headers: { 'Content-Type': obj.httpMetadata?.contentType || 'application/octet-stream', 'Cache-Control': 'private, no-store' } });
+      const obj = await getFile(env, key); if (!obj) fail(404, 'Not found');
+      return new Response(obj.body, { headers: { 'Content-Type': obj.mime || 'application/octet-stream', 'Cache-Control': 'private, no-store' } });
     }
     if (seg[1] === 'verifications' && seg[2] && M === 'POST') {
       const { action, note } = await body();
@@ -303,7 +318,9 @@ async function route(req, env, url, u) {
     return { videos: rows.map(r => ({ id: r.id, name: r.name, size: r.size, mime: r.mime, at: r.at, byName: r.byName, memberId: r.memberId, url: `${pubBase}/files/${r.r2_key}`, mine: !!u && u.id === r.user_id })) };
   }
   if (seg[0] === 'videos' && seg[1] && M === 'POST') {
-    need(u, 'verified'); await rate(env, 'video:' + u.id, 20);
+    need(u, 'verified');
+    if (!env.FILES) fail(503, 'Video sharing turns on when Evidara file storage (R2) is enabled. It is coming soon.');
+    await rate(env, 'video:' + u.id, 20);
     const type = (req.headers.get('Content-Type') || '').split(';')[0];
     if (!/^video\/(mp4|webm|quicktime)$/.test(type)) fail(415, 'Upload an MP4, WebM or MOV video');
     const len = Number(req.headers.get('Content-Length') || 0);
@@ -325,9 +342,9 @@ async function route(req, env, url, u) {
     const key = seg.slice(1).join('/');
     if (!key.startsWith('pub/')) fail(404, 'Not found');
     const range = req.headers.get('Range');
-    const obj = await env.FILES.get(key, range ? { range: req.headers } : undefined);
+    const obj = await getFile(env, key, req);
     if (!obj) fail(404, 'Not found');
-    const h = new Headers({ 'Content-Type': obj.httpMetadata?.contentType || 'application/octet-stream', 'Cache-Control': 'public, max-age=31536000, immutable', 'Accept-Ranges': 'bytes', 'X-Content-Type-Options': 'nosniff' });
+    const h = new Headers({ 'Content-Type': obj.mime || 'application/octet-stream', 'Cache-Control': 'public, max-age=31536000, immutable', 'Accept-Ranges': env.FILES ? 'bytes' : 'none', 'X-Content-Type-Options': 'nosniff' });
     if (range && obj.range) { h.set('Content-Range', `bytes ${obj.range.offset}-${obj.range.offset + obj.range.length - 1}/${obj.size}`); h.set('Content-Length', String(obj.range.length)); return new Response(obj.body, { status: 206, headers: h }); }
     h.set('Content-Length', String(obj.size));
     return new Response(obj.body, { headers: h });

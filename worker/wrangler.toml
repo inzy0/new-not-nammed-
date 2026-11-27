@@ -9,16 +9,18 @@ binding = "AI"
 [[d1_databases]]
 binding = "DB"
 database_name = "evidara"
-database_id = "PASTE-ID-FROM-wrangler-d1-create"
+database_id = "1a4b785b-1d2b-4e5f-9b68-38a1c7620095"
 
-[[r2_buckets]]
-binding = "FILES"
-bucket_name = "evidara-files"
+# File storage (R2). Enable R2 in the Cloudflare dashboard, run `wrangler r2 bucket create evidara-files`,
+# then uncomment these three lines and redeploy. Until then files up to ~1.9 MB are kept in D1 and videos are off.
+# [[r2_buckets]]
+# binding = "FILES"
+# bucket_name = "evidara-files"
 
 [vars]
 ALLOWED_ORIGINS = "https://inzy0.github.io"
 # Google OAuth client ID (Web application). Same value as googleClientId in the site's js/config.js.
-GOOGLE_CLIENT_ID = ""
+GOOGLE_CLIENT_ID = "975871805717-r37i17e7vam8u9rjipotvh436v140o77.apps.googleusercontent.com"
 DAILY_PER_USER = "20"
 DAILY_PER_CLIENT = "5"
 DAILY_PER_IP = "40"
