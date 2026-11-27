@@ -8,22 +8,27 @@ import { checkDoi } from './api.js';
 import { lint } from './prompts.js';
 import { idb } from './idb.js';
 import { profile } from './core.js';
+import * as Audio from './audio.js';
+import * as Pod from './podcast.js';
+import { videoPlayer } from './vplayer.js';
 
 const view = document.getElementById('view');
-export const TYPES = ['Original research', 'Systematic review', 'Case discussion (no identifiers)', 'Perspective / opinion', 'Clinical pearl', 'Research protocol', 'Journal-club summary', 'Educational explainer'];
+export const TYPES = ['Original research', 'Systematic review', 'Case discussion (no identifiers)', 'Quality-improvement study', 'Secondary data analysis', 'Perspective / opinion', 'Clinical pearl', 'Research protocol', 'Journal-club summary', 'Educational explainer'];
+// "Publish with Evidara" accepts completed studies only.
+export const COMPLETED_TYPES = ['Original research', 'Systematic review', 'Case discussion (no identifiers)', 'Quality-improvement study', 'Secondary data analysis'];
 const CREDIT = ['Conceptualization', 'Methodology', 'Investigation', 'Formal analysis', 'Data curation', 'Writing – original draft', 'Writing – review & editing', 'Supervision', 'Funding acquisition', 'Visualization'];
 const GUIDES = { none: 'Not applicable', CONSORT: 'CONSORT (randomised trials)', PRISMA: 'PRISMA (systematic reviews)', STROBE: 'STROBE (observational studies)', CARE: 'CARE (case reports)', SPIRIT: 'SPIRIT (protocols)', STARD: 'STARD (diagnostic accuracy)', TRIPOD: 'TRIPOD (prediction models)' };
 const PATIENT = [[/\b\d{4}\s?\d{4}\s?\d{4}\b/, '12-digit ID number'], [/\b(MRN|UHID|IP ?No|OPD ?No)\b/i, 'hospital record number'], [/\b(DOB|date of birth)\b/i, 'date of birth'],
   [/\b\d{2}[\/-]\d{2}[\/-](19|20)\d{2}\b/, 'a full date (possible date of birth)'], [/\b[6-9]\d{9}\b/, 'phone number'], [/\b(mr|mrs|ms)\.?\s+[A-Z][a-z]+\s+(aged|age)\b/i, 'named patient']];
 const REG = /\b(NCT\d{8}|CTRI\/\d{4}\/\d{2,3}\/\d{6}|ISRCTN\d{8}|ACTRN\d{14}|ChiCTR[-\w]{6,}|CRD\d{11}|DRKS\d{8}|EUCTR\d{4}-\d{6}-\d{2})\b/i;
 
-const blank = () => ({
-  id: uid(), type: TYPES[0], title: '', shortTitle: '', domain: profile().domain, keywords: [],
+const blank = (track = 'community') => ({
+  id: uid(), track, type: TYPES[0], title: '', shortTitle: '', domain: profile().domain, keywords: [],
   authors: [{ name: profile().name || '', memberId: profile().id || '', orcid: '', affiliation: '', roles: [], corresponding: true }],
   abstract: { background: '', methods: '', results: '', conclusion: '' },
   sections: [{ title: 'Introduction', text: '' }, { title: 'Methods', text: '' }, { title: 'Results', text: '' }, { title: 'Discussion', text: '' }, { title: 'Conclusion', text: '' }],
   images: [], videos: [], personal: '', suggestions: '', references: '', refChecks: [],
-  decl: { guideline: 'none', guidelineDone: false, ethics: '', ethicsId: '', consent: '', registry: '', funding: '', coi: '', data: '', ai: '', originality: false, licence: 'CC BY 4.0', rightsImages: false },
+  decl: { completed: false, completionDate: '', prior: 'none', priorLink: '', guideline: 'none', guidelineDone: false, ethics: '', ethicsId: '', consent: '', registry: '', funding: '', coi: '', data: '', ai: '', originality: false, licence: 'CC BY 4.0', rightsImages: false },
   status: 'draft', updatedAt: '',
 });
 
@@ -75,6 +80,13 @@ export function verifyPost(p) {
     const bad = rc.filter(r => !r.ok).length, ret = rc.filter(r => r.retracted).length;
     add(ret ? 'bad' : bad ? 'warn' : 'ok', 'References', `${rc.length} DOI(s) checked · ${bad} not found · ${ret} retracted`);
   } else add(String(p.references || '').trim() ? 'warn' : 'warn', 'References', String(p.references || '').trim() ? 'Not checked yet: press "Check references"' : 'None given');
+  if (p.track === 'evidara') {
+    add(COMPLETED_TYPES.includes(p.type) ? 'ok' : 'bad', 'Completed-study type', COMPLETED_TYPES.includes(p.type) ? p.type : `${p.type} is not accepted for Publish with Evidara (completed studies only)`);
+    add(d.completed ? 'ok' : 'bad', 'Study completed', d.completed ? `Declared complete${d.completionDate ? ' on ' + d.completionDate : ''}` : 'Declare that data collection and analysis are complete');
+    const resWords = (p.sections || []).filter(s => /result|finding/i.test(s.title)).reduce((n, s) => n + words(s.text), 0) + words(p.abstract?.results);
+    add(resWords >= 50 ? 'ok' : 'bad', 'Results reported', `${resWords} words of results (at least 50)`);
+    add(d.prior === 'published' ? 'bad' : 'ok', 'Prior publication', d.prior === 'published' ? 'Already published elsewhere: not accepted' : d.prior === 'preprint' ? `Preprint declared${d.priorLink ? ': ' + d.priorLink : ''}` : 'Not published elsewhere');
+  }
   const req = R.filter(r => r.state !== 'info');
   const score = Math.round((req.filter(r => r.state === 'ok').length / req.length) * 1000) / 10;
   return { items: R, blockers: R.filter(r => r.state === 'bad').length, warnings: R.filter(r => r.state === 'warn').length, completeness: score };
@@ -94,11 +106,26 @@ async function compressImage(file) {
 export function youtubeId(u) { const m = String(u).match(/(?:youtube\.com\/(?:watch\?v=|shorts\/|embed\/)|youtu\.be\/)([\w-]{11})/); return m ? m[1] : null; }
 export function vimeoId(u) { const m = String(u).match(/vimeo\.com\/(\d{6,})/); return m ? m[1] : null; }
 
+// Library item → Publish draft (the "push to Evidara" step).
+export async function draftFromLibrary(it) {
+  const p = blank();
+  p.title = (it.title || '').replace(/^(NotebookLM \w+|Video abstract|Short|Briefing|Long|Customised): /, '').slice(0, 200);
+  p.type = 'Educational explainer';
+  if (it.script) p.sections = [{ title: 'Summary', text: it.script }];
+  if (it.source) p.references = `Source: ${it.source}`;
+  p.fromLibrary = { id: it.id, kind: it.kind, file: it.link || '' };
+  p.updatedAt = new Date().toISOString();
+  await idb.set('pub:' + p.id, p);
+  const ds = store.get('pubDrafts', []); ds.unshift({ id: p.id, title: p.title || 'Untitled', updatedAt: p.updatedAt, status: 'draft' }); store.set('pubDrafts', ds.slice(0, 30));
+  return p.id;
+}
+
 // ---------- page ----------
-export async function publish([draftId]) {
+export async function publish([draftId, trackArg]) {
   const drafts = store.get('pubDrafts', []);
-  let p = draftId ? await idb.get('pub:' + draftId) : null;
-  if (!p) p = blank();
+  let p = draftId && draftId !== 'new' ? await idb.get('pub:' + draftId) : null;
+  if (!p) { p = blank(trackArg === 'evidara' ? 'evidara' : 'community'); if (p.track === 'evidara') p.type = COMPLETED_TYPES[0]; }
+  const evd = p.track === 'evidara';
   const save = async (quiet) => { p.updatedAt = new Date().toISOString(); await idb.set('pub:' + p.id, p); const ds = store.get('pubDrafts', []).filter(x => x.id !== p.id); ds.unshift({ id: p.id, title: p.title || 'Untitled', updatedAt: p.updatedAt, status: p.status }); store.set('pubDrafts', ds.slice(0, 30)); if (!quiet) toast('Draft saved'); drawReport(); };
   let saveT; const autosave = () => { clearTimeout(saveT); saveT = setTimeout(() => save(true), 800); };
   const field = (label, el, hint) => h('label', { class: 'f' }, label, el, hint ? h('span', { class: 'hint' }, hint) : null);
@@ -174,7 +201,7 @@ export async function publish([draftId]) {
   const d = p.decl;
   const formEl = h('div', { class: 'pubform' },
     h('section', { class: 'card step' }, h('h3', {}, '1 · Type, title & keywords'),
-      h('div', { class: 'grid2' }, field('Type', selectEl(TYPES.map(t => [t, t]), () => p.type, v => (p.type = v))), field('Domain', selectEl(DOMAINS.map(([c, l]) => [c, `${l} (${c})`]), () => p.domain, v => (p.domain = v)))),
+      h('div', { class: 'grid2' }, field('Type', selectEl((evd ? COMPLETED_TYPES : TYPES).map(t => [t, t]), () => p.type, v => (p.type = v))), field('Domain', selectEl(DOMAINS.map(([c, l]) => [c, `${l} (${c})`]), () => p.domain, v => (p.domain = v)))),
       field('Title', inp(() => p.title, v => (p.title = v), 'A clear, specific title'), 'Avoid overclaiming words'), field('Short title', inp(() => p.shortTitle, v => (p.shortTitle = v), 'Up to 60 characters')),
       field('Keywords', kwIn), kwBox),
     h('section', { class: 'card step' }, h('h3', {}, '2 · Authors, profiles & contributions'), authorsBox),
@@ -192,6 +219,11 @@ export async function publish([draftId]) {
       field('Suggestions', text(() => p.suggestions, v => (p.suggestions = v), 'What should colleagues do, test or study next?', 3))),
     h('section', { class: 'card step' }, h('h3', {}, '7 · References'), text(() => p.references, v => (p.references = v), 'Paste your reference list (include DOIs where possible)', 6),
       h('div', { class: 'row' }, h('button', { class: 'btn small', type: 'button', onclick: checkRefs }, 'Check references'), h('span', { class: 'meta' }, 'Every DOI is checked: does it exist, and is it retracted?')), refOut),
+    evd ? h('section', { class: 'card step evdtrack' }, h('h3', {}, 'Completed study (Publish with Evidara)'),
+      check('Data collection and analysis are complete, and the results are reported here', () => d.completed, v => (d.completed = v)),
+      h('div', { class: 'grid2' }, field('Completion date', inp(() => d.completionDate, v => (d.completionDate = v), 'YYYY-MM')),
+        field('Published before?', selectEl([['none', 'No'], ['preprint', 'Yes, as a preprint'], ['published', 'Yes, in a journal']], () => d.prior, v => (d.prior = v)))),
+      field('Preprint link (if any)', inp(() => d.priorLink, v => (d.priorLink = v), 'https://…'))) : null,
     h('section', { class: 'card step' }, h('h3', {}, '8 · Quality, declarations & clearance'),
       h('div', { class: 'grid2' },
         field('Reporting guideline', selectEl(Object.entries(GUIDES), () => d.guideline, v => (d.guideline = v))),
@@ -215,7 +247,7 @@ export async function publish([draftId]) {
       const v = verifyPost(p);
       if (v.blockers) { toast(`Fix ${v.blockers} blocker(s) in the Verification panel first`); return; }
       p.status = 'submitted'; await save(true);
-      const pkg = { kind: 'evidara-submission', version: 1, createdAt: new Date().toISOString(), post: p, report: v };
+      const pkg = { kind: 'evidara-submission', version: 1, track: p.track || 'community', createdAt: new Date().toISOString(), post: p, report: v };
       download(`evidara-submission-${(p.shortTitle || p.title).replace(/\W+/g, '-').slice(0, 40)}.json`, JSON.stringify(pkg), 'application/json');
       toast('Submission package downloaded. Send it to the Evidara admin.');
     } }, 'Submit for verification'));
@@ -224,7 +256,8 @@ export async function publish([draftId]) {
     : [h('div', { class: 'meta' }, 'No drafts yet.')]), h('a', { class: 'btn small ghost', href: '#publish' }, '+ New post'));
   view.replaceChildren(h('div', { class: 'cols paper' },
     h('div', { class: 'center wide' },
-      h('h1', { class: 'ptitle-xl' }, 'Publish'),
+      h('h1', { class: 'ptitle-xl' }, evd ? 'Publish with Evidara' : 'Publish'),
+      evd ? h('div', { class: 'chips' }, h('span', { class: 'chip ok' }, 'Completed studies only'), h('a', { class: 'chip', href: '#publish-with-us' }, 'How it works ›')) : h('div', { class: 'chips' }, h('a', { class: 'chip ok', href: '#publish/new/evidara' }, 'Have a completed study? Publish with Evidara ›')),
       h('p', { class: 'sub' }, 'Write a full post with media and declarations. Automated checks run as you type. When you submit, you get a package for the admin; once verified, it appears in Community for everyone.'),
       formEl, actions),
     h('aside', { class: 'rail' }, report, draftsList,
@@ -239,7 +272,8 @@ export async function renderPost(container, p, { draft = false } = {}) {
   container.replaceChildren(h('div', { class: 'cols paper' },
     h('div', { class: 'center wide' },
       h('header', { class: 'phead' },
-        h('div', { class: 'chips' }, h('span', { class: `chip ${draft ? 'warn' : 'ok'}` }, draft ? 'Draft preview' : 'Verified community post'), h('span', { class: 'chip' }, p.type), h('span', { class: 'chip' }, domainByCode(p.domain)?.[1] || ''), h('span', { class: 'chip' }, p.decl?.licence || '')),
+        p.articleId ? h('div', { class: 'potd-tag' }, icon('check', 14), ` Published with Evidara · ${p.articleId}`) : null,
+        h('div', { class: 'chips' }, h('span', { class: `chip ${draft ? 'warn' : 'ok'}` }, draft ? 'Draft preview' : p.track === 'evidara' ? 'Peer-verified study' : 'Verified community post'), h('span', { class: 'chip' }, p.type), h('span', { class: 'chip' }, domainByCode(p.domain)?.[1] || ''), h('span', { class: 'chip' }, p.decl?.licence || '')),
         h('h1', { class: 'ptitle-xl' }, p.title || 'Untitled'),
         h('div', { class: 'achips' }, ...by.map(a => h('span', { class: 'achip' }, h('span', { class: 'av' }, (a.name || '?').split(/\s+/).map(x => x[0]).slice(0, 2).join('').toUpperCase()), a.name,
           a.memberId ? h('span', { class: 'idbadge sm' }, a.memberId) : null, a.orcid && validOrcid(a.orcid) ? h('a', { class: 'orcid', href: `https://orcid.org/${a.orcid}`, target: '_blank', rel: 'noopener noreferrer', title: 'ORCID' }, icon('check', 12)) : null))),
@@ -257,7 +291,9 @@ export async function renderPost(container, p, { draft = false } = {}) {
         ...[['Ethics', p.decl?.ethics === 'not-required' ? 'Not required' : p.decl?.ethicsId], ['Consent', p.decl?.consent], ['Registration', p.decl?.registry], ['Reporting guideline', GUIDES[p.decl?.guideline] || ''],
           ['Funding', p.decl?.funding], ['Conflicts of interest', p.decl?.coi], ['Data availability', p.decl?.data], ['AI use', p.decl?.ai]].filter(([, t]) => t).map(([l, t]) => h('p', {}, h('b', {}, l + ': '), t)),
         h('h4', {}, 'Contributions'), ...by.map(a => h('p', {}, h('b', {}, (a.name || 'Author') + ': '), (a.roles || []).join(', ') || '—', a.affiliation ? ` · ${a.affiliation}` : ''))),
-      p.references ? h('div', { class: 'card' }, h('h3', {}, 'References'), h('pre', { class: 'refs' }, p.references)) : null),
+      p.references ? h('div', { class: 'card' }, h('h3', {}, 'References'), h('pre', { class: 'refs' }, p.references)) : null,
+      p.articleId ? h('div', { class: 'card' }, h('h3', {}, 'How to cite'), h('pre', { class: 'mono cite-out' }, `${by.map(a => a.name).join(', ')}. ${p.title}. Evidara. ${new Date(p.publishedAt).getFullYear()}. Article ${p.articleId}. ${location.origin}${location.pathname}#post/${p.id}`)) : null,
+      postMedia(p)),
     h('aside', { class: 'rail' }, h('div', { class: 'rcard' }, h('div', { class: 'rhead' }, h('b', {}, 'Verification report'), h('span', { class: `chip ${v.blockers ? 'bad' : v.warnings ? 'warn' : 'ok'}` }, `${v.completeness}% complete`)),
       ...v.items.map(r => h('div', { class: 'vrow' }, h('span', { class: `chip ${r.state}` }, r.label), h('div', { class: 'meta' }, r.detail)))),
       draft ? h('a', { class: 'btn', href: `#publish/${p.id}` }, 'Back to editing') : null)));
@@ -273,4 +309,30 @@ export async function postPage([id]) {
   const p = (await loadPosts()).find(x => x.id === id);
   if (!p) { view.replaceChildren(h('div', { class: 'empty' }, 'Post not found.')); return; }
   return renderPost(view, p);
+}
+
+// Audio + video for a post, built from its own text and images (same rules as papers: its own words only).
+export function postSections(p) {
+  const abs = Object.entries(p.abstract || {}).filter(([, t]) => t?.trim()).map(([k, t]) => ({ title: k[0].toUpperCase() + k.slice(1), text: t }));
+  return [...abs, ...(p.sections || []).filter(s => s.text?.trim()).map(s => ({ title: s.title, text: s.text }))];
+}
+export function postEpisode(p, format = 'short') {
+  const s = Audio.buildDocScript({ title: p.title, by: (p.authors || []).map(a => a.name).join(', '), source: 'Evidara' }, postSections(p), format);
+  return { key: 'post:' + p.id, title: p.title, journal: 'Evidara', year: p.publishedAt ? new Date(p.publishedAt).getFullYear() : '', format, formatName: Audio.FORMATS[Audio.fmtId(format)].name, lines: s.lines, basis: 'post', cover: (p.images || []).slice(0, 1).map(i => i.src) };
+}
+function postMedia(p) {
+  const secs = postSections(p);
+  if (!secs.length) return null;
+  const sents = secs.flatMap(s => splitSentences(s.text).map(t => ({ t, src: s.title }))).filter(x => x.t.length > 40);
+  const pick = sents.filter((_, i) => i % Math.max(1, Math.floor(sents.length / 5)) === 0).slice(0, 5);
+  const slides = [{ k: p.type || 'Evidara', t: p.title, s: (p.authors || []).map(a => a.name).join(', '), say: p.title, img: p.images?.[0] ? [p.images[0].src] : null, cls: 'title' },
+    ...pick.map((x, i) => ({ k: x.src, t: x.t, s: 'From the article', say: x.t, img: p.images?.[i + 1] ? [p.images[i + 1].src] : null, cls: 'quote' })),
+    { k: 'Evidara', t: p.articleId ? `Article ${p.articleId}` : 'Community article', s: 'Read the full article on Evidara', say: 'Read the full article on Evidara.', cls: 'cite' }];
+  let fmt = 'short';
+  const seg = h('div', { class: 'seg small' });
+  const drawSeg = () => seg.replaceChildren(...Object.entries(Audio.FORMATS).filter(([k]) => k !== 'custom').map(([k, f]) => h('button', { type: 'button', class: k === fmt ? 'on' : '', onclick: () => { fmt = k; drawSeg(); } }, f.name)));
+  drawSeg();
+  return h('div', { class: 'card' }, h('h3', {}, 'Listen & watch'),
+    h('div', { class: 'row' }, seg, h('button', { class: 'playbig', type: 'button', 'aria-label': 'Play audio', onclick: () => Pod.enqueueEpisode(postEpisode(p, fmt)) }, icon('play', 24))),
+    videoPlayer({ title: p.title, slides, aspect: '16:9', downloadName: 'evidara-article.webm' }));
 }

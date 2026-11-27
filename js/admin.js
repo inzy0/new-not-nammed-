@@ -8,7 +8,7 @@ import { icon } from './icons.js';
 import { DOMAINS, domainByCode, parseId, validOrcid } from './ids.js';
 import { idb } from './idb.js';
 import { verifyPost, renderPost } from './publish.js';
-import { loadPosts } from './feed.js';
+import { loadPosts, resetPosts } from './feed.js';
 import { loadMembers } from './views.js';
 import { profile } from './core.js';
 
@@ -73,7 +73,7 @@ export async function admin() {
   let tab = store.get('adminTab', 'members');
   const queue = (await idb.get('adm:queue')) || [];
   const live = { members: (await idb.get('adm:members')) || await loadMembers(), posts: (await idb.get('adm:posts')) || await loadPosts() };
-  const saveAll = async () => { await idb.set('adm:queue', queue); await idb.set('adm:members', live.members); await idb.set('adm:posts', live.posts); };
+  const saveAll = async () => { await idb.set('adm:queue', queue); await idb.set('adm:members', live.members); await idb.set('adm:posts', live.posts); resetPosts(); };
   const body = h('div', {});
   const tabs = h('div', { class: 'seg wide' });
   const drawTabs = () => tabs.replaceChildren(...[['members', `Member requests (${queue.filter(q => q.kind === 'evidara-member-request').length})`], ['subs', `Submissions (${queue.filter(q => q.kind === 'evidara-submission').length})`],
@@ -123,12 +123,15 @@ export async function admin() {
     const prev = h('div', { class: 'admin-preview', hidden: true });
     return h('div', { class: 'card' },
       h('div', { class: 'rhead' }, h('h3', {}, p.title || 'Untitled'), h('span', { class: `chip ${v.blockers ? 'bad' : v.warnings ? 'warn' : 'ok'}` }, `${v.completeness}% · ${v.blockers} blockers · ${v.warnings} warnings`)),
-      h('div', { class: 'meta' }, `${p.type} · ${(p.authors || []).map(a => a.name + (a.memberId ? ` (${a.memberId})` : '')).join(', ')} · received ${new Date(q._at).toLocaleString()}`),
+      h('div', { class: 'meta' }, `${p.track === 'evidara' ? 'Publish with Evidara · ' : ''}${p.type} · ${(p.authors || []).map(a => a.name + (a.memberId ? ` (${a.memberId})` : '')).join(', ')} · received ${new Date(q._at).toLocaleString()}`),
       h('div', { class: 'row', style: 'margin-top:10px' },
         h('button', { class: 'btn ghost', type: 'button', onclick: async () => { prev.hidden = !prev.hidden; if (!prev.hidden) await renderPost(prev, p, { draft: true }); } }, 'Preview full post'),
         h('button', { class: 'btn', type: 'button', disabled: v.blockers > 0, title: v.blockers ? 'Has blockers' : '', onclick: async () => {
           live.posts = live.posts.filter(x => x.id !== p.id);
-          live.posts.unshift({ ...p, status: 'published', publishedAt: new Date().toISOString(), verifiedBy: 'Evidara admin', report: { completeness: v.completeness, warnings: v.warnings } });
+          const yr = new Date().getFullYear();
+          const seq = live.posts.filter(x => x.articleId?.startsWith(`EVD-${yr}-`)).length + 1;
+          const articleId = p.track === 'evidara' ? `EVD-${yr}-${String(seq).padStart(5, '0')}` : undefined;
+          live.posts.unshift({ ...p, articleId, status: 'published', publishedAt: new Date().toISOString(), verifiedBy: 'Evidara admin', report: { completeness: v.completeness, warnings: v.warnings } });
           queue.splice(queue.indexOf(q), 1); await saveAll(); toast('Approved. Export to site to make it public.'); drawTabs(); draw();
         } }, 'Approve & publish'),
         h('button', { class: 'btn ghost', type: 'button', onclick: async () => { queue.splice(queue.indexOf(q), 1); await saveAll(); toast('Rejected. Tell the author directly.'); drawTabs(); draw(); } }, 'Reject')),
@@ -154,7 +157,7 @@ export async function admin() {
         h('p', {}, `Download both files and put them in the site's data/ folder (replacing the old ones), then update the repository. Everyone then sees ${live.members.length} verified member(s) and ${live.posts.length} post(s).`),
         h('div', { class: 'row' },
           h('button', { class: 'btn', type: 'button', onclick: () => download('members.json', JSON.stringify(live.members, null, 1), 'application/json') }, 'Download members.json'),
-          h('button', { class: 'btn', type: 'button', onclick: () => download('posts.json', JSON.stringify(live.posts), 'application/json') }, 'Download posts.json')),
+          h('button', { class: 'btn', type: 'button', onclick: () => download('posts.json', JSON.stringify(live.posts.map(({ localPreview, ...x }) => x)), 'application/json') }, 'Download posts.json')),
         h('p', { class: 'note' }, 'members.json holds only public fields (ID, name, role, institution, ORCID). Registration numbers and documents are never exported.')));
     }
   }

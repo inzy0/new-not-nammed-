@@ -4,7 +4,7 @@ A free platform for healthcare professionals and researchers: **read → verify 
 
 **Live site:** https://inzy0.github.io/new-not-nammed-/
 
-## What works now (v0.3)
+## What works now (v0.4)
 
 | Part | What it does |
 |---|---|
@@ -18,6 +18,11 @@ A free platform for healthcare professionals and researchers: **read → verify 
 | **Admin portal** | Passphrase-protected on the admin's device. Import member verification requests and submissions, check IDs, ORCIDs and documents, approve, then export `members.json` / `posts.json` to publish to everyone. |
 | **People** | Auto-listed: verified members, plus top researchers in your field (OpenAlex), worldwide or India. Follow anyone. Search and ID lookup stay available. |
 | **Verification card** | Retraction, corrections, preprint or journal, study design, licence, funding, COI, data availability, registration |
+| **Map** | **Universe**: every domain is a planet (size = new open-access papers in 30 days, live). Click to land on **Earth**: institutions publishing in that domain at their real coordinates (OpenAlex), zoom to street level; each place shows its people, studies and collaboration lines. **Articles**: every author institution of one study, connected. |
+| **Publish with us** | A completed-studies-only track: pathway (prepare, submit, screening, verification, review, decision, release), stricter checks, an **Evidara Article ID** (EVD-YYYY-NNNNN) on approval, and the article goes into feeds, Reels and Podcasts with its own audio and video. Authors keep copyright (CC BY or CC BY-NC). DOIs and indexing are not offered yet. |
+| **NotebookLM bridge** | From the Studio notebook: send sources to your own Google Drive (when Google sign-in is configured) or download a NotebookLM pack; open NotebookLM; import the Audio/Video Overview back into your Library as "Ready to push". |
+| **Library** | Idea → Made → **Ready to push** → Scheduled → **Pushed to Evidara**. Destinations are Evidara's own formats (Reel, Feed post, Video, Podcast, Community article); "Push to Evidara" opens a prefilled Publish draft. |
+| **Design** | Frosted glass, 3D tilt with light glare, a sliding segment indicator, spring motion, a moving background, a welcome screen to pick your fields, and an About page |
 | **Also** | Citations (Vancouver/AMA/APA/BibTeX), Library with schedule and calendar export, Evidara IDs (`CARD-7K3QX7` style, typo-catching check character), 5 theme templates, a moving background, page transitions and scroll animations (off when the device asks for reduced motion) |
 
 ## How publishing works on a free static site
@@ -39,4 +44,4 @@ committed to this repository. Only repository access can publish. Documents and 
 
 ## Credits
 
-Data: [Europe PMC](https://europepmc.org), [OpenAlex](https://openalex.org) and the PMC Open Access archive (AWS Open Data). PDF reading: [pdf.js](https://github.com/mozilla/pdf.js) (Apache-2.0, in `vendor/`). Fonts: Google Fonts (OFL). Each article's own licence applies to its text and figures.
+Data: [Europe PMC](https://europepmc.org), [OpenAlex](https://openalex.org) and the PMC Open Access archive (AWS Open Data). PDF reading: [pdf.js](https://github.com/mozilla/pdf.js) (Apache-2.0, in `vendor/`). Maps: [Leaflet](https://leafletjs.com) (BSD-2-Clause, in `vendor/`) with © OpenStreetMap contributors tiles; institution data © OpenAlex (CC0). Fonts: Google Fonts (OFL). Each article's own licence applies to its text and figures.

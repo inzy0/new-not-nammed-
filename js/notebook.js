@@ -12,6 +12,7 @@ import * as Lib from './library.js';
 import * as P from './prompts.js';
 import { videoPlayer } from './vplayer.js';
 import { updateQuotaLine, vars } from './core.js';
+import { notebookLmCard } from './notebooklm.js';
 
 const PATIENT = [[/\b\d{4}\s?\d{4}\s?\d{4}\b/, 'a 12-digit ID number (Aadhaar-like)'], [/\b(MRN|UHID|IP ?No|OPD ?No|hospital number)\b/i, 'a hospital record number'],
   [/\b(DOB|date of birth)\s*[:\-]/i, 'a date of birth'], [/\b[6-9]\d{9}\b/, 'a phone number'], [/\bpatient name\s*[:\-]/i, 'a patient name field']];
@@ -254,6 +255,7 @@ export function mountNotebook(root) {
       h('div', { class: 'row', style: 'margin-top:10px' }, paperId, h('button', { class: 'btn small', type: 'button', onclick: addPaper }, 'Add paper')),
       h('div', { style: 'margin-top:10px' }, paste), h('div', { class: 'row' }, h('button', { class: 'btn small ghost', type: 'button', onclick: addPaste }, 'Add pasted text'))),
     h('div', { class: 'card' }, h('h3', {}, 'Sources'), srcList),
-    out);
+    out,
+    notebookLmCard(() => docs));
   restore();
 }

@@ -1,9 +1,9 @@
 // Content library: everything made in the studio, with its status (idea → made → scheduled → posted),
-// target platform, schedule time and where the file is stored. Browser storage for now; moves to the
+// Evidara destination (Reel, Feed post, Video, Podcast, Community article), schedule time and where the file is stored. Browser storage for now; moves to the
 // server database when accounts go live (see PLAN). Export to JSON and calendar (.ics) keeps nothing locked in.
 import { store, uid } from './util.js';
 
-export const STATUSES = [['idea', 'Idea'], ['made', 'Made'], ['scheduled', 'Scheduled'], ['posted', 'Posted']];
+export const STATUSES = [['idea', 'Idea'], ['made', 'Made'], ['ready', 'Ready to push'], ['scheduled', 'Scheduled'], ['posted', 'Pushed to Evidara']];
 
 export function all() { return store.get('library', []); }
 function save(list) { store.set('library', list); }
@@ -37,7 +37,7 @@ export function toICS() {
   const ev = all().filter(x => x.scheduledAt).map(x => [
     'BEGIN:VEVENT', `UID:${x.id}@evidara`, `DTSTAMP:${icsDate(new Date().toISOString())}`,
     `DTSTART:${icsDate(x.scheduledAt)}`, `DURATION:PT15M`,
-    `SUMMARY:${icsEsc(`Post: ${x.title}`)}`, `DESCRIPTION:${icsEsc(`${x.kind} for ${x.platform}. ${x.source || ''}`)}`, 'END:VEVENT',
+    `SUMMARY:${icsEsc(`Post: ${x.title}`)}`, `DESCRIPTION:${icsEsc(`${x.kind} for Evidara. ${x.source || ''}`)}`, 'END:VEVENT',
   ].join('\r\n'));
   return ['BEGIN:VCALENDAR', 'VERSION:2.0', 'PRODID:-//Evidara//Library//EN', ...ev, 'END:VCALENDAR'].join('\r\n');
 }

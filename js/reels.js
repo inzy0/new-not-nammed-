@@ -9,7 +9,8 @@ import { domainByCode } from './ids.js';
 import { figImg } from './figures.js';
 import * as Pod from './podcast.js';
 import { profile, bloomSVG } from './core.js';
-import { likes, share, saveToLibrary } from './feed.js';
+import { likes, share, saveToLibrary, loadPosts } from './feed.js';
+import { postSections, postEpisode } from './publish.js';
 
 const view = document.getElementById('view');
 const SLIDE_MS = 4200;
@@ -69,6 +70,29 @@ function reelEl(a) {
   return el;
 }
 
+function postReel(p) {
+  const secs = postSections(p);
+  const sents = secs.flatMap(s => splitSentences(s.text).map(t => ({ t, src: s.title }))).filter(x => x.t.length > 40);
+  const defs = [{ k: p.articleId ? 'Published with Evidara' : 'Evidara community', t: p.title, s: (p.authors || []).map(a => a.name).join(', '), cls: 'title' },
+    ...sents.filter(x => /result|conclusion/i.test(x.src)).slice(0, 2).map(x => ({ k: x.src, t: x.t, s: 'From the article', cls: 'quote' })),
+    { k: 'Read it', t: p.articleId || 'Community article', s: 'Open the article on Evidara', cls: 'cite' }];
+  let idx = 0, timer = null;
+  const slides = h('div', { class: 'rslides' }), bars = h('div', { class: 'rbars' });
+  const bg = h('div', { class: 'rbg' }, p.images?.[0] ? h('img', { class: 'rfig', src: p.images[0].src, alt: '' }) : bloomSVG());
+  const render = () => {
+    slides.replaceChildren(...defs.map((d2, i) => h('div', { class: `rslide ${d2.cls}` + (i === idx ? ' on' : '') }, h('div', { class: 'rk' }, d2.k), h('div', { class: 'rt' }, d2.t), h('div', { class: 'rs' }, d2.s))));
+    bars.replaceChildren(...defs.map((_, i) => h('span', { class: i < idx ? 'done' : i === idx ? 'run' : '' }, h('i', { style: i === idx ? `animation-duration:${SLIDE_MS}ms` : '' }))));
+  };
+  const el = h('section', { class: 'reel' }, bg, h('div', { class: 'rshade' }), bars, slides,
+    h('div', { class: 'rside' }, h('button', { class: 'rbtn', type: 'button', 'aria-label': 'Listen', onclick: () => Pod.enqueueEpisode(postEpisode(p, 'short')) }, icon('volume', 26), h('span', {}, 'Listen')),
+      h('a', { class: 'rbtn', href: `#post/${encodeURIComponent(p.id)}` }, icon('external', 24), h('span', {}, 'Open'))),
+    h('a', { class: 'rinfo', href: `#post/${encodeURIComponent(p.id)}` }, h('b', {}, (p.authors?.[0]?.name || 'Evidara') + ((p.authors || []).length > 1 ? ' et al.' : '')), h('span', {}, ' · open article ›')));
+  el._play = () => { if (timer) return; render(); timer = setInterval(() => { idx = (idx + 1) % defs.length; render(); }, SLIDE_MS); };
+  el._stop = () => { clearInterval(timer); timer = null; };
+  render();
+  return el;
+}
+
 export async function reels([startKey]) {
   const pr = profile(); const d = domainByCode(pr.domain);
   const feed = h('div', { class: 'reels', tabindex: 0, 'aria-label': 'Reels: scroll or use arrow keys' });
@@ -97,7 +121,9 @@ export async function reels([startKey]) {
   feed.addEventListener('keydown', e => {
     if (e.key === 'ArrowDown' || e.key === 'ArrowUp') { e.preventDefault(); feed.scrollBy({ top: (e.key === 'ArrowDown' ? 1 : -1) * feed.clientHeight, behavior: 'smooth' }); }
   });
-  if (startKey) { try { const a = await getArticle(startKey); if (a) add(a); } catch { /* continue with feed */ } }
+  if (startKey?.startsWith('post:')) { const p = (await loadPosts()).find(x => x.id === startKey.slice(5)); if (p) { const el = postReel(p); feed.append(el); io.observe(el); } }
+  else if (startKey) { try { const a = await getArticle(startKey); if (a) add(a); } catch { /* continue with feed */ } }
+  for (const p of (await loadPosts()).filter(x => !d || x.domain === d[0]).slice(0, 5)) { if (startKey === 'post:' + p.id) continue; const el = postReel(p); feed.append(el); io.observe(el); }
   await more();
   feed.focus({ preventScroll: true });
   const stopAll = () => { if (!document.body.contains(feed)) { feed.querySelectorAll('.reel').forEach(r => r._stop?.()); io.disconnect(); window.removeEventListener('hashchange', stopAll); } };

@@ -1,18 +1,18 @@
 // Prompt library for image, video and audio makers.
 // These are prompt TEMPLATES written by hand (not model output, not training data). They are filled per person from
-// their profile (domain, audience, platform, tone, theme palette) and per paper (title, design, one verbatim finding).
+// their profile (domain, audience, tone, theme palette) and the Evidara format and per paper (title, design, one verbatim finding).
 // "Format playbook" = curated formats, updated by hand. It is not a live trend feed.
 
 export const PLAYBOOK_UPDATED = '2026-11-27';
 
 export const PLATFORMS = {
-  reel: { name: 'Instagram Reel / YouTube Short', ratio: '9:16', secs: '30–60 s' },
-  ytlong: { name: 'YouTube video', ratio: '16:9', secs: '4–8 min' },
-  linkedin: { name: 'LinkedIn carousel / post', ratio: '4:5', secs: 'slides' },
-  x: { name: 'X / Threads post', ratio: '16:9 or 1:1', secs: 'image + thread' },
-  whatsapp: { name: 'WhatsApp status / group', ratio: '9:16', secs: '15–30 s' },
-  podcast: { name: 'Podcast / audio', ratio: 'audio', secs: '1–10 min' },
+  reel: { name: 'Evidara Reel', ratio: '9:16', secs: '30–60 s' },
+  post: { name: 'Evidara Feed post', ratio: '4:5', secs: 'image + text' },
+  video: { name: 'Evidara Video', ratio: '16:9', secs: '2–8 min' },
+  podcast: { name: 'Evidara Podcast', ratio: 'audio', secs: '1–10 min' },
+  article: { name: 'Evidara Community article', ratio: 'article', secs: 'full paper' },
 };
+export const platformOf = k => PLATFORMS[k] || PLATFORMS.reel;
 export const AUDIENCES = { clinicians: 'clinicians', students: 'medical and allied-health students', researchers: 'researchers', public: 'the general public (patient education)', policy: 'health policy makers' };
 export const TONES = { calm: 'calm expert', bold: 'bold and punchy', story: 'story-led', playful: 'playful but accurate', academic: 'academic' };
 
@@ -90,7 +90,7 @@ export function fill(tpl, v) {
 }
 
 export function videoPlan(fmt, v) {
-  const plat = PLATFORMS[v.platformId] || PLATFORMS.reel;
+  const plat = platformOf(v.platformId);
   const lines = [
     `FORMAT: ${fmt.name} · ${plat.name} · ${plat.ratio}${fmt.secs ? ` · ~${fmt.secs}s` : ''}`,
     `AUDIENCE: ${v.audience} · TONE: ${v.tone}`,

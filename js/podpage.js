@@ -7,6 +7,8 @@ import { domainByCode } from './ids.js';
 import * as Audio from './audio.js';
 import * as Pod from './podcast.js';
 import { profile, bloomSVG } from './core.js';
+import { loadPosts } from './feed.js';
+import { postEpisode } from './publish.js';
 
 const view = document.getElementById('view');
 
@@ -43,7 +45,13 @@ export async function podcasts() {
       return h('section', { class: 'podrow' }, h('div', { class: 'rhead' }, h('h2', {}, f.name), h('span', { class: 'meta' }, f.desc)),
         h('div', { class: 'hscroll' }, ...(list.length ? list : papers.slice(0, 10)).map(a => episodeCard(a, fid, f.name))));
     }));
-    if (!papers.length) rows.replaceChildren(h('div', { class: 'empty' }, 'No papers with an audio-friendly licence in the last 30 days for this domain.'));
+    const posts = await loadPosts();
+    if (posts.length) rows.prepend(h('section', { class: 'podrow' }, h('div', { class: 'rhead' }, h('h2', {}, 'Evidara community studies'), h('span', { class: 'meta' }, 'Published on Evidara, read in the authors\' own words')),
+      h('div', { class: 'hscroll' }, ...posts.slice(0, 12).map(p => h('div', { class: 'ep' },
+        h('div', { class: 'cover md' }, p.images?.[0] ? h('img', { src: p.images[0].src, alt: '' }) : bloomSVG(), h('span', { class: 'cover-tag' }, p.articleId || 'Community'),
+          h('button', { class: 'ep-play', type: 'button', 'aria-label': 'Play', onclick: () => Pod.enqueueEpisode(postEpisode(p, 'short')) }, icon('play', 22))),
+        h('a', { class: 'ep-title', href: `#post/${encodeURIComponent(p.id)}` }, p.title), h('div', { class: 'meta' }, p.type))))));
+    if (!papers.length && !posts.length) rows.replaceChildren(h('div', { class: 'empty' }, 'No papers with an audio-friendly licence in the last 30 days for this domain.'));
   } catch (e) {
     rows.replaceChildren(h('div', { class: 'empty' }, `Could not load episodes: ${e.message}. `, h('button', { class: 'btn small', type: 'button', onclick: () => podcasts() }, 'Retry')));
   }

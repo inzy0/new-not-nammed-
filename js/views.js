@@ -7,6 +7,8 @@ import * as Lib from './library.js';
 import { profile, theme, vars } from './core.js';
 import { mountNotebook } from './notebook.js';
 import { verificationCard } from './admin.js';
+import { libraryFileUrl } from './notebooklm.js';
+import { draftFromLibrary } from './publish.js';
 
 const view = document.getElementById('view');
 
@@ -145,7 +147,7 @@ export function studio() {
   }
   view.append(h('section', { class: 'section' },
     h('h2', {}, 'Studio'),
-    h('p', { class: 'sub' }, `Prompts personalised for ${domainByCode(pr.domain)?.[1] || 'your domain'}, ${P.AUDIENCES[pr.audience]}, ${P.PLATFORMS[pr.platform].name}, a ${P.TONES[pr.tone]} tone and the ${theme()} theme palette. Change these in Profile.`),
+    h('p', { class: 'sub' }, `Prompts personalised for ${domainByCode(pr.domain)?.[1] || 'your domain'}, ${P.AUDIENCES[pr.audience]}, a ${P.TONES[pr.tone]} tone and the ${theme()} theme palette. Change these in Profile.`),
     h('div', { class: 'row', style: 'margin-bottom:14px' }, topic), tabs, body));
   render();
 }
@@ -164,7 +166,7 @@ export function library() {
   } });
   view.append(h('section', { class: 'section' },
     h('h2', {}, 'Library'),
-    h('p', { class: 'sub' }, 'Everything you made or saved: idea → made → scheduled → posted. Set a time and platform, then export the schedule to your calendar. Stored in this browser until accounts go live, so export a backup now and then.'),
+    h('p', { class: 'sub' }, 'Everything you made, imported or saved: idea → made → ready to push → scheduled → pushed to Evidara. Choose the Evidara destination and time, push to Publish, or export your schedule. Stored in this browser until accounts go live, so export a backup now and then.'),
     h('div', { class: 'row', style: 'margin-bottom:16px' },
       h('button', { class: 'btn', type: 'button', onclick: () => download('evidara-schedule.ics', Lib.toICS(), 'text/calendar') }, 'Export calendar (.ics)'),
       h('button', { class: 'btn ghost', type: 'button', onclick: () => download('evidara-library.json', JSON.stringify(Lib.all(), null, 2), 'application/json') }, 'Backup (.json)'),
@@ -176,7 +178,7 @@ export function library() {
 function itemCard(it, rerender) {
   const st = h('select', { 'aria-label': 'Status' }, ...Lib.STATUSES.map(([k, l]) => h('option', { value: k, selected: k === it.status }, l)));
   st.addEventListener('change', () => { Lib.update(it.id, { status: st.value }); rerender(); });
-  const plat = h('select', { 'aria-label': 'Platform' }, ...Object.entries(P.PLATFORMS).map(([k, p]) => h('option', { value: k, selected: k === it.platform }, p.name)));
+  const plat = h('select', { 'aria-label': 'Evidara destination' }, ...Object.entries(P.PLATFORMS).map(([k, p]) => h('option', { value: k, selected: k === (P.PLATFORMS[it.platform] ? it.platform : 'reel') }, p.name)));
   plat.addEventListener('change', () => Lib.update(it.id, { platform: plat.value }));
   const when = h('input', { type: 'datetime-local', 'aria-label': 'Schedule time', value: it.scheduledAt ? toLocalInput(it.scheduledAt) : '' });
   when.addEventListener('change', () => { Lib.update(it.id, { scheduledAt: when.value ? new Date(when.value).toISOString() : '', status: when.value && it.status !== 'posted' ? 'scheduled' : it.status }); rerender(); });
@@ -186,6 +188,8 @@ function itemCard(it, rerender) {
     it.link ? h('div', { class: 'meta' }, `Stored: ${it.storage} · ${it.link}`) : null,
     h('div', { style: 'display:grid;gap:6px;margin-top:8px' }, st, plat, when),
     h('div', { class: 'row', style: 'margin-top:6px' },
+      it.fileKey ? h('button', { class: 'btn small ghost', type: 'button', onclick: async () => { const u = await libraryFileUrl(it.fileKey); if (u) window.open(u, '_blank', 'noopener'); else toast('File not found in this browser'); } }, 'Open') : null,
+      it.status !== 'posted' ? h('button', { class: 'btn small', type: 'button', onclick: async () => { const id = await draftFromLibrary(it); Lib.update(it.id, { status: 'ready' }); location.hash = `#publish/${id}`; } }, 'Push to Evidara') : null,
       (it.prompt || it.script) ? h('button', { class: 'btn small ghost', type: 'button', onclick: () => copyText(it.prompt || it.script) }, 'Copy') : null,
       h('button', { class: 'btn small ghost', type: 'button', onclick: () => { Lib.remove(it.id); rerender(); } }, 'Delete')));
 }
@@ -197,7 +201,6 @@ export function profilePage() {
   const name = h('input', { type: 'text', value: pr.name, placeholder: 'Your name', 'aria-label': 'Name' });
   const dom = h('select', { 'aria-label': 'Domain' }, ...DOMAINS.map(([c, l]) => h('option', { value: c, selected: c === pr.domain }, `${l} (${c})`)));
   const aud = h('select', { 'aria-label': 'Audience' }, ...Object.entries(P.AUDIENCES).map(([k, l]) => h('option', { value: k, selected: k === pr.audience }, l)));
-  const plat = h('select', { 'aria-label': 'Platform' }, ...Object.entries(P.PLATFORMS).map(([k, p]) => h('option', { value: k, selected: k === pr.platform }, p.name)));
   const tone = h('select', { 'aria-label': 'Tone' }, ...Object.entries(P.TONES).map(([k, l]) => h('option', { value: k, selected: k === pr.tone }, l)));
   const idBox = h('div', {});
   const showId = () => {
@@ -210,7 +213,7 @@ export function profilePage() {
   const save = () => {
     const cur = profile();
     const changedDomain = cur.id && cur.id.slice(0, 4) !== dom.value;
-    const next = { ...cur, name: name.value.trim(), domain: dom.value, audience: aud.value, platform: plat.value, tone: tone.value };
+    const next = { ...cur, name: name.value.trim(), domain: dom.value, audience: aud.value, tone: tone.value };
     if (!cur.id || changedDomain) next.id = newId(dom.value);
     store.set('profile', next); showId(); toast(changedDomain ? 'Saved. New ID issued for your new domain.' : 'Saved');
   };
@@ -221,7 +224,7 @@ export function profilePage() {
       h('div', { class: 'card' },
         h('div', { style: 'display:grid;gap:12px' },
           h('label', { class: 'f' }, 'Name', name), h('label', { class: 'f' }, 'Healthcare domain', dom),
-          h('label', { class: 'f' }, 'Main audience', aud), h('label', { class: 'f' }, 'Main platform', plat), h('label', { class: 'f' }, 'Tone', tone)),
+          h('label', { class: 'f' }, 'Main audience', aud), h('label', { class: 'f' }, 'Tone', tone)),
         h('div', { class: 'row', style: 'margin-top:14px' }, h('button', { class: 'btn', type: 'button', onclick: save }, 'Save'))),
       h('div', { class: 'card' }, h('h3', {}, 'Your Evidara ID'), idBox,
         h('p', { class: 'note' }, 'Format: DOMAIN-XXXXXC. For example CARD-7K3QX7 is a cardiology member. The domain code lets anyone browse people by specialty.')))));

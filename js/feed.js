@@ -9,6 +9,7 @@ import { figImg } from './figures.js';
 import * as Pod from './podcast.js';
 import * as Lib from './library.js';
 import { profile, bloomSVG } from './core.js';
+import { countUp } from './anim.js';
 
 const view = document.getElementById('view');
 
@@ -177,6 +178,7 @@ export async function explore() {
   drawStories(); drawTabs(); drawFeeds();
   center.append(searchRow, stories, toolbar, how, filt, newPill, hero.el, potd, status, list, sentinel);
   paperOfTheDay(potd, st.feeds);
+  communityBlock(potd, st.feeds);
 
   let cursor = '*', busy = false, done = false, topId = null, gen = 0, count = 0, reelBuf = [];
   const addReelStrip = () => {
@@ -267,20 +269,31 @@ async function paperOfTheDay(box, feeds) {
   } catch { box.replaceChildren(); }
 }
 
+async function communityBlock(after, feeds) {
+  const posts = (await loadPosts()).filter(p => feeds.includes(p.domain)).slice(0, 3);
+  if (!posts.length) return;
+  after.after(h('section', { class: 'reelstrip commblock' }, h('div', { class: 'rhead' }, h('b', {}, 'From the Evidara community'), h('a', { href: '#publish-with-us' }, 'Publish with us ›')), ...posts.map(postCard)));
+}
+
 let postsCache = null;
+export function resetPosts() { postsCache = null; }
 export async function loadPosts() {
   if (postsCache) return postsCache;
   try { const r = await fetch('data/posts.json', { cache: 'no-cache' }); postsCache = r.ok ? await r.json() : []; } catch { postsCache = []; }
   if (!Array.isArray(postsCache)) postsCache = [];
+  // On the admin's own device, approved-but-not-yet-exported posts show too (marked as local preview).
+  try { const { idb } = await import('./idb.js'); const local = await idb.get('adm:posts'); if (Array.isArray(local)) { const ids = new Set(postsCache.map(p => p.id)); local.forEach(p => { if (!ids.has(p.id)) postsCache.push({ ...p, localPreview: true }); }); } } catch { /* none */ }
   return postsCache;
 }
+const absText = p => typeof p.abstract === 'string' ? p.abstract : Object.values(p.abstract || {}).filter(Boolean).join(' ');
 export function postCard(p) {
   return h('article', { class: 'pcard pubcard' },
-    h('div', { class: 'potd-tag' }, icon('check', 14), ' Verified community post'),
+    h('div', { class: 'potd-tag' }, icon('check', 14), p.articleId ? ` Published with Evidara · ${p.articleId}` : ' Verified community post', p.localPreview ? ' · local preview (not exported yet)' : ''),
+    p.images?.[0] ? h('a', { href: `#post/${encodeURIComponent(p.id)}`, class: 'media-link' }, h('div', { class: 'media' }, h('img', { class: 'media-img', src: p.images[0].src, alt: p.images[0].alt || '' }))) : null,
     h('a', { class: 'ptitle', href: `#post/${encodeURIComponent(p.id)}` }, p.title),
     h('div', { class: 'achips' }, ...(p.authors || []).map(x => h('span', { class: 'achip' }, h('span', { class: 'av' }, (x.name || '?').split(/\s+/).map(s => s[0]).slice(0, 2).join('').toUpperCase()), x.name, x.memberId ? h('span', { class: 'idbadge sm' }, x.memberId) : null))),
     h('div', { class: 'pmeta' }, `${p.type || 'Article'} · ${p.publishedAt ? new Date(p.publishedAt).toLocaleDateString() : ''}`),
-    p.abstract ? h('p', { class: 'pblurb' }, p.abstract.slice(0, 320) + (p.abstract.length > 320 ? '…' : '')) : null,
+    absText(p) ? h('p', { class: 'pblurb' }, absText(p).slice(0, 320) + (absText(p).length > 320 ? '…' : '')) : null,
     h('div', { class: 'chips' }, ...(p.keywords || []).slice(0, 6).map(k => h('span', { class: 'chip' }, k))));
 }
 
@@ -307,7 +320,7 @@ function compactHero() {
 
 function buildRail(rail, list) {
   const total = h('b', {}, '…');
-  openAccessTotal().then(n => (total.textContent = n.toLocaleString())).catch(() => (total.textContent = 'millions of'));
+  openAccessTotal().then(n => countUp(total, n)).catch(() => (total.textContent = 'millions of'));
   const people = h('div', {});
   const drawPeople = () => {
     const seen = new Map();
