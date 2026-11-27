@@ -658,3 +658,11 @@ body[data-route="map"] main#view { padding: 16px 20px calc(20px + var(--player-h
 @media (prefers-reduced-motion: reduce) { .orbit, .pin, .sun, .stars, .pwu-badge .ring { animation: none !important; } .pin { transform: translate(-50%, -50%) rotateX(-62deg); } }
 
 @media (max-width: 1500px) and (min-width: 761px) { .orbit { --R: calc(210px + var(--r) * 125px); } }
+
+/* v0.4.1 fit fixes: feed column never grows wider than its track; horizontal rows scroll inside themselves */
+.plist { grid-template-columns: minmax(0, 1fr); }
+.plist > *, .center > *, .reelstrip, .commblock, .potd { min-width: 0; max-width: 100%; }
+.hscroll, .stories, .seg.feeds { max-width: 100%; min-width: 0; }
+.cols > .center { overflow-x: clip; overflow-y: visible; }
+.hero-right { overflow: hidden; }
+@media (max-width: 1500px) { .numeral .ring { width: 110px; height: 110px; font-size: 46px; } .numeral .ghost { font-size: 46px; } .hero h1 { font-size: clamp(38px, 4.4vw, 64px); } }

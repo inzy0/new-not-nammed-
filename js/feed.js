@@ -320,7 +320,7 @@ function compactHero() {
 
 function buildRail(rail, list) {
   const total = h('b', {}, '…');
-  openAccessTotal().then(n => countUp(total, n)).catch(() => (total.textContent = 'millions of'));
+  openAccessTotal().then(n => countUp(total, n)).catch(() => (total.textContent = 'Millions'));
   const people = h('div', {});
   const drawPeople = () => {
     const seen = new Map();
