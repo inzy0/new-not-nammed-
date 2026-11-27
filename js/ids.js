@@ -50,12 +50,17 @@ export const DOMAINS = [
 export const domainByCode = code => DOMAINS.find(d => d[0] === code);
 
 const ALPHA = '0123456789ABCDEFGHJKMNPQRSTVWXYZ'; // Crockford base32
-const CHECK = ALPHA + '*~$=U';                  // Crockford check symbols (mod 37)
 
+// Luhn mod 32: the check character is always a letter or digit, and it catches every single-character typo
+// and most swaps of neighbouring characters.
 function checkChar(body) {
-  let n = 0n;
-  for (const c of body) n = n * 32n + BigInt(ALPHA.indexOf(c));
-  return CHECK[Number(n % 37n)];
+  let sum = 0, factor = 2;
+  for (let i = body.length - 1; i >= 0; i--) {
+    let add = factor * ALPHA.indexOf(body[i]);
+    add = Math.floor(add / 32) + (add % 32);
+    sum += add; factor = factor === 2 ? 1 : 2;
+  }
+  return ALPHA[(32 - (sum % 32)) % 32];
 }
 
 export function newId(code) {
@@ -67,7 +72,7 @@ export function newId(code) {
 
 export function parseId(raw) {
   const s = String(raw || '').toUpperCase().replace(/\s+/g, '').replace(/[IL]/g, '1').replace(/O/g, '0');
-  const m = s.match(/^([A-Z]{4})-([0-9A-HJKMNP-TV-Z]{5})([0-9A-HJKMNP-TV-Z*~$=U])$/);
+  const m = s.match(/^([A-Z]{4})-([0-9A-HJKMNP-TV-Z]{5})([0-9A-HJKMNP-TV-Z])$/);
   if (!m) return { ok: false, reason: 'Format is DOMAIN-XXXXXC, e.g. CARD-7K3QX4' };
   const d = domainByCode(m[1]);
   if (!d) return { ok: false, reason: `Unknown domain code ${m[1]}` };

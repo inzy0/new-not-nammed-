@@ -6,7 +6,11 @@ const cache = new Map();
 
 async function getJSON(url) {
   if (cache.has(url)) return cache.get(url);
-  const r = await fetch(url);
+  const ctl = new AbortController(); const timer = setTimeout(() => ctl.abort(), 60000);
+  let r;
+  try { r = await fetch(url, { signal: ctl.signal }); }
+  catch (e) { throw new Error(e.name === 'AbortError' ? `${new URL(url).host} took over 60 s to answer` : `cannot reach ${new URL(url).host}`); }
+  finally { clearTimeout(timer); }
   if (!r.ok) throw new Error(`HTTP ${r.status} from ${new URL(url).host}`);
   const j = await r.json();
   cache.set(url, j);
@@ -16,7 +20,8 @@ async function getJSON(url) {
 function isoDaysAgo(n) { const d = new Date(Date.now() - n * 864e5); return d.toISOString().slice(0, 10); }
 
 export async function searchArticles({ query, days = 30, openOnly = true, pageSize = 24, cursor = '*', sort = 'date' }) {
-  let q = `(${query})`;
+  // Title + abstract only: full-text matching pulls in papers that merely mention a term.
+  let q = `TITLE_ABS:(${query})`;
   if (openOnly) q += ' AND OPEN_ACCESS:y';
   if (days) q += ` AND FIRST_PDATE:[${isoDaysAgo(days)} TO ${isoDaysAgo(0)}]`;
   const sortParam = sort === 'cited' ? 'CITED desc' : 'FIRST_PDATE_D desc';

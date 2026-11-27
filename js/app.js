@@ -115,11 +115,17 @@ async function home() {
         feature('04', 'Video abstracts', 'Vertical videos rendered in your browser from the paper\'s title, finding, limitation and citation.', '#studio'),
         feature('05', 'Prompt library', 'Image, video and hook prompts filled in for your specialty, audience, platform and theme.', '#studio'),
         feature('06', 'Your Evidara ID', 'A unique ID with your healthcare domain, e.g. CARD-7K3QX4, so colleagues can find you.', '#profile'))));
-  try {
-    const r = await searchArticles({ query: d ? d[2] : 'medicine', days: 14, pageSize: 8 });
-    items = r.results; i = 0;
-    if (!items.length) copy.textContent = 'No new open-access papers in the last 14 days for this domain.'; else show();
-  } catch (e) { copy.textContent = `Could not reach Europe PMC: ${e.message}`; }
+  const load = async () => {
+    copy.replaceChildren(h('span', { class: 'spinner' }), ' Loading today\'s verified papers…');
+    try {
+      const r = await searchArticles({ query: d ? d[2] : 'medicine', days: 14, pageSize: 8 });
+      items = r.results; i = 0;
+      if (!items.length) copy.textContent = 'No new open-access papers in the last 14 days for this domain.'; else show();
+    } catch (e) {
+      copy.replaceChildren(h('span', {}, `Could not load papers: ${e.message}. `), h('button', { class: 'btn small', type: 'button', onclick: load }, 'Retry'));
+    }
+  };
+  load();
 }
 function feature(n, title, text, href) {
   return h('a', { class: 'card', href, style: 'text-decoration:none' }, h('div', { class: 'mono', style: 'color:var(--accent)' }, n), h('h3', {}, title), h('div', { class: 'meta' }, text));
@@ -146,7 +152,7 @@ async function feed() {
       r.results.forEach(a => list.append(paperCard(a)));
       if (!r.results.length && reset) list.append(h('div', { class: 'empty' }, 'Nothing found. Widen the time window.'));
       cursor = r.next; more.hidden = !r.next || r.results.length < 24;
-    } catch (e) { list.replaceChildren(h('div', { class: 'empty' }, `Could not load: ${e.message}`)); }
+    } catch (e) { list.replaceChildren(h('div', { class: 'empty' }, `Could not load: ${e.message}. `, h('button', { class: 'btn small', type: 'button', onclick: () => load() }, 'Retry'))); }
   }
   [sel, days, sort].forEach(x => x.addEventListener('change', () => load()));
   q.addEventListener('keydown', e => { if (e.key === 'Enter') load(); });
@@ -214,7 +220,13 @@ async function paper([key]) {
       h('div', {}, card))));
 
   if (a.pmcid && a.hasFullText) {
-    try { full = await getFullText(a.pmcid); renderChecks(); } catch { /* abstract only */ }
+    try {
+      full = await getFullText(a.pmcid); renderChecks();
+      if (!abs.length && full.abstract.length) {
+        abs.push(...full.abstract);
+        absBox.replaceChildren(...abs.map(s => [h('h4', {}, s.title), h('div', {}, s.text)]), h('div', { class: 'meta' }, 'Abstract taken from the full text.'));
+      }
+    } catch { /* abstract only */ }
   }
   buildPaperStudio(studioBox, a, abs, () => full);
 }
