@@ -129,7 +129,9 @@ function parseJats(xml) {
   const byType = sel => Array.from(xml.querySelectorAll(sel)).map(text).filter(Boolean).join(' ');
   const body = secs(xml.querySelector('body'));
   const backSecs = secs(xml.querySelector('back')).filter(s => !/^references?$/i.test(s.title));
-  const pick = re => backSecs.filter(s => re.test(s.title)).map(s => s.text).join(' ');
+  // Statements often sit as sub-sections (e.g. Declarations > Funding) in the body or back matter.
+  const allSecs = [...body, ...backSecs];
+  const pick = re => allSecs.flatMap(s => re.test(s.title) ? [s.text] : s.subs.filter(ss => re.test(ss.title || '')).map(ss => ss.paras.join(' '))).filter(Boolean).join(' ');
   return {
     abstract: absEl ? secs(absEl).map(s => ({ title: s.title === 'Text' ? 'Abstract' : s.title, text: s.text })) : [],
     sections: body,
@@ -138,8 +140,8 @@ function parseJats(xml) {
     affs: Array.from(xml.querySelectorAll('article-meta aff')).map(a => text(a).replace(/^\d+\s*/, '')).filter(Boolean),
     keywords: Array.from(xml.querySelectorAll('article-meta kwd')).map(text).filter(Boolean),
     funding: text(xml.querySelector('funding-group')) || pick(/funding|financial support/i),
-    coi: byType('fn[fn-type="COI-statement"], fn[fn-type="conflict"], sec[sec-type="COI-statement"]') || pick(/conflict|competing interest|declaration of interest/i),
-    dataAvail: byType('sec[sec-type="data-availability"], notes[notes-type="data-availability"], fn[fn-type="data-availability"]') || pick(/data availability|availability of data/i),
+    coi: byType('fn[fn-type="COI-statement"], fn[fn-type="conflict"], sec[sec-type="COI-statement"]') || pick(/conflicts? of interest|competing interest|declaration of interest|disclosure|disclosures/i),
+    dataAvail: byType('sec[sec-type="data-availability"], sec[sec-type="data-availability-statement"], notes[notes-type="data-availability"], fn[fn-type="data-availability"]') || pick(/data availability|availability of data|data sharing/i),
     contrib: byType('fn[fn-type="con"], sec[sec-type="author-contributions"]') || pick(/author contribution|contributions/i),
     ethics: byType('sec[sec-type="ethics-statement"]') || pick(/ethic|consent/i),
     acknowledgements: text(xml.querySelector('back > ack')),
