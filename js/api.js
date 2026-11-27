@@ -72,40 +72,78 @@ function normalize(r) {
   };
 }
 
-// Full text JATS XML (open access only). Returns {abstract:[{title,text}], sections:[{title,text}], figures:[...]}
-export async function getFullText(pmcid) {
+// Full text JATS XML (open access only). Structured for the reader, figures, author statements and audio.
+const XLINK = 'http://www.w3.org/1999/xlink';
+const inflight = new Map();
+export function getFullText(pmcid) {
   const url = `${EPMC}/${pmcid}/fullTextXML`;
-  if (cache.has(url)) return cache.get(url);
-  const r = await fetch(url);
-  if (!r.ok) throw new Error(`Full text not available (HTTP ${r.status})`);
-  const xml = new DOMParser().parseFromString(await r.text(), 'application/xml');
+  if (cache.has(url)) return Promise.resolve(cache.get(url));
+  if (inflight.has(url)) return inflight.get(url);
+  const p = (async () => {
+    const ctl = new AbortController(); const timer = setTimeout(() => ctl.abort(), 60000);
+    let r;
+    try { r = await fetch(url, { signal: ctl.signal }); }
+    catch (e) { throw new Error(e.name === 'AbortError' ? 'Full text took over 60 s' : 'Full text not available yet'); }
+    finally { clearTimeout(timer); }
+    if (!r.ok) throw new Error(`Full text not available (HTTP ${r.status})`);
+    const xml = new DOMParser().parseFromString(await r.text(), 'application/xml');
+    if (xml.querySelector('parsererror')) throw new Error('Full text could not be read');
+    const out = parseJats(xml);
+    cache.set(url, out);
+    return out;
+  })();
+  inflight.set(url, p);
+  p.then(() => inflight.delete(url), () => inflight.delete(url));
+  return p;
+}
+
+function parseJats(xml) {
   const text = el => (el?.textContent || '').replace(/\s+/g, ' ').trim();
-  const secs = (root) => {
+  const kids = (el, tag) => Array.from(el?.children || []).filter(c => c.tagName === tag);
+  const figOf = f => {
+    const g = f.querySelector('graphic');
+    return { id: f.getAttribute('id') || '', label: text(f.querySelector('label')), caption: text(f.querySelector('caption')),
+      href: g ? (g.getAttributeNS(XLINK, 'href') || g.getAttribute('xlink:href') || '') : '' };
+  };
+  const parasOf = el => kids(el, 'p').map(text).filter(Boolean);
+  const secs = root => {
     const out = [];
     if (!root) return out;
-    const top = Array.from(root.children).filter(c => c.tagName === 'sec');
-    if (!top.length) { const p = Array.from(root.querySelectorAll('p')).map(text).join(' '); if (p) out.push({ title: 'Text', text: p }); }
+    const top = kids(root, 'sec');
+    if (!top.length) {
+      const paras = Array.from(root.querySelectorAll('p')).map(text).filter(Boolean);
+      if (paras.length) out.push({ title: 'Text', paras, subs: [], figs: Array.from(root.querySelectorAll('fig')).map(figOf), text: paras.join(' ') });
+      return out;
+    }
     for (const s of top) {
       const title = text(s.querySelector(':scope > title')) || 'Section';
-      const paras = Array.from(s.querySelectorAll('p')).map(text).filter(Boolean).join(' ');
-      if (paras) out.push({ title, text: paras });
+      const paras = parasOf(s);
+      const subs = kids(s, 'sec').map(ss => ({ title: text(ss.querySelector(':scope > title')), paras: Array.from(ss.querySelectorAll('p')).map(text).filter(Boolean) })).filter(x => x.paras.length);
+      const figs = Array.from(s.querySelectorAll('fig')).map(figOf);
+      const all = [...paras, ...subs.flatMap(x => x.paras)];
+      if (all.length || figs.length) out.push({ title, paras, subs, figs, text: all.join(' ') });
     }
     return out;
   };
-  const abs = xml.querySelector('article-meta > abstract:not([abstract-type])') || xml.querySelector('article-meta > abstract');
-  const figs = Array.from(xml.querySelectorAll('fig')).map(f => ({
-    label: text(f.querySelector('label')), caption: text(f.querySelector('caption')),
-  }));
-  const out = {
-    abstract: abs ? secs(abs) : [],
-    sections: secs(xml.querySelector('body')),
-    figures: figs,
-    funding: text(xml.querySelector('funding-group')) || '',
-    coi: Array.from(xml.querySelectorAll('fn[fn-type="COI-statement"], fn[fn-type="conflict"], sec[sec-type="COI-statement"]')).map(text).join(' '),
-    dataAvail: Array.from(xml.querySelectorAll('sec[sec-type="data-availability"], notes[notes-type="data-availability"], fn[fn-type="data-availability"]')).map(text).join(' '),
+  const absEl = xml.querySelector('article-meta > abstract:not([abstract-type])') || xml.querySelector('article-meta > abstract');
+  const byType = sel => Array.from(xml.querySelectorAll(sel)).map(text).filter(Boolean).join(' ');
+  const body = secs(xml.querySelector('body'));
+  const backSecs = secs(xml.querySelector('back')).filter(s => !/^references?$/i.test(s.title));
+  const pick = re => backSecs.filter(s => re.test(s.title)).map(s => s.text).join(' ');
+  return {
+    abstract: absEl ? secs(absEl).map(s => ({ title: s.title === 'Text' ? 'Abstract' : s.title, text: s.text })) : [],
+    sections: body,
+    figures: Array.from(xml.querySelectorAll('fig')).map(figOf),
+    tables: Array.from(xml.querySelectorAll('table-wrap')).map(t => ({ label: text(t.querySelector('label')), caption: text(t.querySelector('caption')) })),
+    affs: Array.from(xml.querySelectorAll('article-meta aff')).map(a => text(a).replace(/^\d+\s*/, '')).filter(Boolean),
+    keywords: Array.from(xml.querySelectorAll('article-meta kwd')).map(text).filter(Boolean),
+    funding: text(xml.querySelector('funding-group')) || pick(/funding|financial support/i),
+    coi: byType('fn[fn-type="COI-statement"], fn[fn-type="conflict"], sec[sec-type="COI-statement"]') || pick(/conflict|competing interest|declaration of interest/i),
+    dataAvail: byType('sec[sec-type="data-availability"], notes[notes-type="data-availability"], fn[fn-type="data-availability"]') || pick(/data availability|availability of data/i),
+    contrib: byType('fn[fn-type="con"], sec[sec-type="author-contributions"]') || pick(/author contribution|contributions/i),
+    ethics: byType('sec[sec-type="ethics-statement"]') || pick(/ethic|consent/i),
+    acknowledgements: text(xml.querySelector('back > ack')),
   };
-  cache.set(url, out);
-  return out;
 }
 
 // Abstract sections from Europe PMC abstractText (uses <h4> headings when structured).
@@ -135,17 +173,38 @@ export async function searchResearchers(q) {
 
 export async function getResearcher(id) {
   const a = await getJSON(`${OA}/authors/${encodeURIComponent(id)}`);
-  const works = await getJSON(`${OA}/works?filter=author.id:${encodeURIComponent(id)}&sort=cited_by_count:desc&per-page=12`);
-  const recent = await getJSON(`${OA}/works?filter=author.id:${encodeURIComponent(id)}&sort=publication_date:desc&per-page=12`);
+  const oid = (a.id || '').split('/').pop();
+  const works = await getJSON(`${OA}/works?filter=author.id:${oid}&sort=cited_by_count:desc&per-page=12`);
+  const recent = await getJSON(`${OA}/works?filter=author.id:${oid}&sort=publication_date:desc&per-page=12`);
   const mapW = w => ({ title: w.display_name || w.title || '(untitled)', year: w.publication_year, cites: w.cited_by_count,
     doi: w.doi ? w.doi.replace('https://doi.org/', '') : null, pmid: w.ids?.pmid ? w.ids.pmid.split('/').pop() : null,
     pmcid: w.ids?.pmcid ? w.ids.pmcid.split('/').pop() : null, retracted: !!w.is_retracted, type: w.type,
     venue: w.primary_location?.source?.display_name || '' });
   return {
-    id, name: a.display_name, orcid: a.orcid ? a.orcid.split('/').pop() : null, works: a.works_count, cites: a.cited_by_count,
+    id: oid, name: a.display_name, orcid: a.orcid ? a.orcid.split('/').pop() : null, works: a.works_count, cites: a.cited_by_count,
     h: a.summary_stats?.h_index, i10: a.summary_stats?.i10_index,
     inst: (a.last_known_institutions || []).map(i => i.display_name), topics: (a.topics || []).slice(0, 8).map(t => t.display_name),
     perYear: (a.counts_by_year || []).map(c => ({ year: c.year, cites: c.cited_by_count, works: c.works_count })).sort((x, y) => x.year - y.year),
     top: (works.results || []).map(mapW), recent: (recent.results || []).map(mapW),
   };
 }
+
+// Related papers (OpenAlex related_works for a DOI).
+export async function relatedPapers(doi) {
+  if (!doi) return [];
+  const w = await getJSON(`${OA}/works/doi:${encodeURIComponent(doi)}?select=related_works`);
+  const ids = (w.related_works || []).slice(0, 8).map(u => u.split('/').pop());
+  if (!ids.length) return [];
+  const j = await getJSON(`${OA}/works?filter=openalex:${ids.join('|')}&select=id,display_name,doi,ids,publication_year,primary_location,cited_by_count&per-page=8`);
+  return (j.results || []).map(x => ({ title: x.display_name, year: x.publication_year, cites: x.cited_by_count,
+    doi: x.doi ? x.doi.replace('https://doi.org/', '') : null, pmcid: x.ids?.pmcid ? x.ids.pmcid.split('/').pop() : null,
+    pmid: x.ids?.pmid ? x.ids.pmid.split('/').pop() : null, venue: x.primary_location?.source?.display_name || '' }));
+}
+
+// Total open-access papers in Europe PMC (a real, live count).
+export async function openAccessTotal() {
+  const j = await getJSON(`${EPMC}/search?query=${encodeURIComponent('OPEN_ACCESS:y')}&format=json&pageSize=1&resultType=idlist`);
+  return j.hitCount;
+}
+
+export function articleKeyFromWork(w) { return w.pmcid || (w.pmid ? `MED:${w.pmid}` : w.doi); }

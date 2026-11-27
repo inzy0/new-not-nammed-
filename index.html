@@ -2,36 +2,33 @@
 <html lang="en" data-theme="bloom">
 <head>
 <meta charset="utf-8">
-<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <title>Evidara</title>
-<meta name="description" content="Verified research feeds, citations, audio and video studio, and a community for healthcare professionals.">
+<meta name="description" content="Live open-access research feed with verification, citations, reels, podcasts and discussion for healthcare professionals.">
 <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src https://fonts.gstatic.com; connect-src 'self' https://www.ebi.ac.uk https://api.openalex.org; img-src 'self' data: blob: https:; media-src 'self' blob:; object-src 'none'; base-uri 'none'; form-action 'none'">
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="preconnect" href="https://www.ebi.ac.uk" crossorigin>
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Unbounded:wght@400;600;800&family=Red+Hat+Text:wght@400;500;700&family=Fraunces:opsz,wght@9..144,400;9..144,700;9..144,900&family=Inter+Tight:wght@400;600&family=Space+Grotesk:wght@400;600;700&family=JetBrains+Mono:wght@400;600&family=Yatra+One&family=Mukta:wght@400;600;700&family=Sora:wght@400;600;800&family=Manrope:wght@400;600;700&display=swap">
 <link rel="stylesheet" href="css/themes.css">
 <link rel="stylesheet" href="css/app.css">
 <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Ccircle cx='32' cy='32' r='30' fill='%23412653'/%3E%3Ctext x='32' y='43' font-size='30' text-anchor='middle' fill='%23E0563F' font-family='Arial' font-weight='900'%3EE%3C/text%3E%3C/svg%3E">
 </head>
 <body>
-<div class="frame">
-  <header class="topbar">
-    <a class="brand" href="#home" aria-label="Evidara home">EV</a>
-    <nav class="nav" aria-label="Main">
-      <a href="#feed" data-nav="feed">Feed</a>
-      <a href="#people" data-nav="people">People</a>
-      <a href="#studio" data-nav="studio">Studio</a>
-      <a href="#library" data-nav="library">Library</a>
-      <a href="#profile" data-nav="profile">Profile</a>
-    </nav>
-    <button class="theme-btn" id="themeBtn" type="button" aria-label="Change theme">Theme</button>
-  </header>
+<div class="shell">
+  <aside class="side" aria-label="Main navigation">
+    <a class="brand" href="#feed"><span class="logo">EV</span><span class="brand-name">Evidara</span></a>
+    <nav class="snav" id="snav"></nav>
+    <div class="side-foot">
+      <button class="snav-item" id="themeBtn" type="button" aria-label="Change theme"><span class="ico" id="themeIco"></span><span class="lbl">Theme</span></button>
+      <div class="quota" id="quotaLine"></div>
+      <div class="side-links"><a href="https://github.com/inzy0/new-not-nammed-/blob/main/docs/ROADMAP.md" target="_blank" rel="noopener noreferrer">Roadmap</a> · <a href="https://github.com/inzy0/new-not-nammed-/issues" target="_blank" rel="noopener noreferrer">Feedback</a></div>
+      <div class="side-links">No patient data, ever.</div>
+    </div>
+  </aside>
   <main id="view" tabindex="-1"></main>
-  <footer class="foot">
-    <span>Evidara: free, verified, for healthcare professionals. No patient data, ever.</span>
-    <span id="quotaLine"></span>
-  </footer>
 </div>
+<div id="player" class="player" hidden></div>
 <div class="themes-panel" id="themesPanel" hidden></div>
 <div class="toast" id="toast" role="status" aria-live="polite"></div>
 <script type="module" src="js/app.js"></script>

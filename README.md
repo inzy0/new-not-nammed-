@@ -4,21 +4,27 @@ A free platform for healthcare professionals and researchers: **read → verify 
 
 **Live site (once GitHub Pages is on):** https://inzy0.github.io/new-not-nammed-/
 
-## What works now (v0.1)
+## What works now (v0.2)
+
+Layout: alphaXiv-style wide layout. Sidebar, live feed and a right-hand rail on desktop and laptop; bottom tabs on phones.
 
 | Part | What it does | Data / tech |
 |---|---|---|
-| Daily Evidence (home) | Daily Bloom template: today's open-access papers in your domain, in a numbered carousel | Europe PMC |
-| Verified feed | 40 healthcare domains, time window, sort by newest or most cited. Every card shows a verification summary. | Europe PMC REST (free, no key) |
-| Verification card | Retraction / expression of concern / corrections, preprint vs journal, study design, licence and what it permits, funding, COI and data-availability statements, trial registration ID, citation count. Each check names its source. | Europe PMC record + JATS full text |
-| Citation maker | Vancouver, AMA, APA, BibTeX; copy or download `.bib` | From the record |
-| Audio overview | **Deep Dive, The Brief, The Critique, The Debate**; Shorter / Default / Longer; 4 voice styles; two hosts. Every content line is read **word for word** from the paper and shows its source section. | Browser speech (free, offline, unlimited) |
-| Video abstract | 9:16 video rendered in the browser: title, verbatim finding, verbatim limitation, source. Uses the current theme. Download as WebM. | Canvas + MediaRecorder |
-| Studio | 16 image-prompt styles, 12 video formats, 12 hooks and audio concepts, personalised by domain, audience, platform, tone and theme palette. Overclaiming words ("cure", "miracle", "100%"…) are flagged. | Hand-written templates |
-| Library | Idea → Made → Scheduled → Posted board; platform and time per item; export the schedule to a calendar (`.ics`); JSON backup and import | Browser storage |
-| Evidara ID | `DOMAIN-XXXXXC`, e.g. `CARD-7K3QX4`: domain code, 5 random characters and a check character that catches typos | Crockford base32 |
-| People | Researcher search and profiles (papers: most cited / recent, citations per year, h-index, topics, ORCID), marked "unclaimed" | OpenAlex (free, no key) |
-| Themes | Bloom, Ink, Pulse, Saffron, Clinic, each with its own font pair | Google Fonts (OFL) |
+| Explore (live feed) | Search across millions of open-access papers. **For you** (your domain feeds), **Trending** (most cited, last 90 days), **Latest** (all). Filters for study design, time window and preprints. Infinite scroll, a "new papers" alert every 3 minutes, and each paper's own figure on its card. Daily Bloom hero carousel. | Europe PMC REST, PMC Open Access archive |
+| Paper page | **Overview** (abstract, podcast, video abstract, key figures, related papers) · **Read paper** (full text with contents and inline figures, PDF) · **Figures** (every figure with the authors' caption) · **Author statements** (limitations, contributions, funding, COI, data availability, ethics, affiliations, and a slot for author video/image/audio) · **Discuss** (chat-style thread to the authors: question / issue / unresolved gap / comment, with replies and a patient-identifier block) | Europe PMC JATS full text, OpenAlex |
+| Verification card | Retraction / expression of concern / corrections, preprint vs journal, study design, licence and what it permits, funding, COI and data-availability statements, registration ID, citations | Europe PMC |
+| Podcasts | Spotify-style player that keeps playing while you browse: cover, play/pause, ±15 s, next/previous, seek, speed, queue, phone lock-screen controls. Transcript hidden unless you open it. Formats: **Deep Dive, The Brief, The Critique, The Debate** in three lengths. Every spoken content line is the paper's own sentence. | Browser speech (free, offline) |
+| Reels | Vertical swipe feed. Each reel is animated from the paper: title, figure with the authors' caption, a verbatim finding, a verbatim limitation, the citation. Like, listen, save, share, discuss. | Same sources |
+| Citations | Vancouver, AMA, APA, BibTeX | From the record |
+| Video abstract | 9:16 WebM rendered in the browser, downloadable | Canvas + MediaRecorder |
+| Studio | 16 image styles, 12 video formats, 12 hooks and audio concepts, personalised by domain, audience, platform, tone and theme. Overclaiming words are flagged. | Hand-written templates |
+| Library | Idea → Made → Scheduled → Posted, with calendar (.ics) and JSON backup | Browser storage |
+| Evidara ID | `DOMAIN-XXXXXC`, e.g. `CARD-7K3QX4`, with a typo-catching check character | Crockford base32 + Luhn mod 32 |
+| Researchers | Search and profiles (most cited / recent, citations per year, topics, ORCID), marked "unclaimed"; follow authors from your feed | OpenAlex |
+| Themes | Bloom, Ink, Pulse, Saffron, Clinic | Google Fonts (OFL) |
+
+**Not live yet (needs the free cloud backend, see roadmap):** shared discussion between users (messages stay on your
+device until sign-in), authors posting their own media, built-in image generation, MP3 download, reserved IDs.
 
 ## Rules the platform keeps
 
