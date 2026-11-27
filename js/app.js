@@ -13,19 +13,20 @@ import { admin } from './admin.js';
 import { mapPage } from './map.js';
 import { publishWithUs, about, onboarding } from './about.js';
 import { loadMe, mountAccount, onAuth } from './backend.js';
+import { messages, memberPage, startUnreadBadge } from './chat.js';
 import { syncLibrary } from './library.js';
 
 const view = document.getElementById('view');
 const NAV = [
-  ['feed', 'Explore', 'explore'], ['reels', 'Reels', 'reels'], ['podcasts', 'Podcasts', 'podcast'], ['map', 'Map', 'globe'], ['studio', 'Studio', 'studio'],
+  ['feed', 'Explore', 'explore'], ['reels', 'Reels', 'reels'], ['podcasts', 'Podcasts', 'podcast'], ['messages', 'Messages', 'chat'], ['map', 'Map', 'globe'], ['studio', 'Studio', 'studio'],
   ['publish-with-us', 'Publish with us', 'pdf'], ['people', 'People', 'people'], ['library', 'My Library', 'library'], ['profile', 'Profile', 'profile'], ['about', 'About', 'info'],
 ];
 document.getElementById('snav').append(...NAV.map(([r, label, ic]) =>
   h('a', { class: 'snav-item', href: `#${r}`, dataset: { nav: r } }, h('span', { class: 'ico' }, icon(ic, 22)), h('span', { class: 'lbl' }, label))));
 document.getElementById('themeIco').append(icon('theme', 22));
 
-const routes = { feed: explore, home: explore, paper, reels, podcasts, people, researcher, studio, library, profile: profilePage, id: idLookup, publish, post: postPage, admin, map: mapPage, 'publish-with-us': publishWithUs, about };
-const parent = { paper: 'feed', researcher: 'people', id: 'people', home: 'feed', post: 'feed', admin: 'profile', publish: 'publish-with-us' };
+const routes = { feed: explore, home: explore, paper, reels, podcasts, people, researcher, studio, library, profile: profilePage, id: idLookup, publish, post: postPage, admin, map: mapPage, 'publish-with-us': publishWithUs, about, messages, member: memberPage };
+const parent = { paper: 'feed', researcher: 'people', id: 'people', home: 'feed', post: 'feed', admin: 'profile', publish: 'publish-with-us', member: 'people' };
 let first = true;
 
 function route() {
@@ -46,9 +47,10 @@ function route() {
 window.addEventListener('hashchange', route);
 window.addEventListener('unhandledrejection', e => { console.warn('Unhandled:', e.reason); });
 mountAccount(document.getElementById('acct'));
+startUnreadBadge();
 loadMe().then(u => { if (u) syncLibrary(); });
 let lastUid = null;
-onAuth(u => { const id = u?.id || null; if (id !== lastUid) { lastUid = id; if (u) syncLibrary(); const r = location.hash.split('/')[0]; if (['#profile', '#admin', '#publish'].includes(r)) route(); } });
+onAuth(u => { const id = u?.id || null; if (id !== lastUid) { lastUid = id; if (u) syncLibrary(); const r = location.hash.split('/')[0]; if (['#profile', '#admin', '#publish', '#messages', '#member'].includes(r)) route(); } });
 startBackground();
 startReveal();
 startTilt();

@@ -366,7 +366,7 @@ function discussOnline(box, ctx) {
       const cs = (await api('/threads/' + encodeURIComponent(keyOf(ctx.a)))).comments || [];
       if (!cs.length) { thread.replaceChildren(h('div', { class: 'empty' }, 'No discussion yet. Ask the authors a question, flag an issue, or name a gap you found.')); return; }
       const bubble = (m, isReply) => h('div', { class: 'bubble' + (isReply ? ' reply' : '') + (m.mine ? ' mine' : '') },
-        h('div', { class: 'bhead' }, h('span', { class: 'av' }, (m.name || '?').split(/\s+/).map(p => p[0]).slice(0, 2).join('').toUpperCase()), h('b', {}, m.name || 'Member'),
+        h('div', { class: 'bhead' }, h('span', { class: 'av' }, (m.name || '?').split(/\s+/).map(p => p[0]).slice(0, 2).join('').toUpperCase()), m.memberId ? h('a', { href: `#member/${encodeURIComponent(m.memberId)}` }, h('b', {}, m.name || 'Member')) : h('b', {}, m.name || 'Member'),
           m.memberId ? h('span', { class: 'idbadge sm' }, m.memberId) : null, m.verified ? h('span', { class: 'chip ok' }, 'Verified') : null,
           h('span', { class: `chip kind-${m.kind}` }, KINDS[m.kind] || 'Comment'), m.toAuthors ? h('span', { class: 'chip' }, '→ authors') : null,
           h('span', { class: 'meta' }, new Date(m.at).toLocaleString([], { dateStyle: 'medium', timeStyle: 'short' }))),

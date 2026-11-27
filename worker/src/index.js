@@ -201,7 +201,7 @@ async function route(req, env, url, u) {
     if (p === '/admin/stats' && M === 'GET') {
       const one = async sql => (await env.DB.prepare(sql).first())?.n || 0;
       return { users: await one('SELECT COUNT(*) n FROM users'), verified: await one('SELECT COUNT(*) n FROM profiles WHERE verified = 1'), published: await one(`SELECT COUNT(*) n FROM posts WHERE status = 'published'`),
-        pendingVerifications: await one(`SELECT COUNT(*) n FROM verifications WHERE status = 'pending'`), pendingPosts: await one(`SELECT COUNT(*) n FROM posts WHERE status = 'submitted'`), comments: await one('SELECT COUNT(*) n FROM comments WHERE deleted = 0'), videos: await one('SELECT COUNT(*) n FROM videos WHERE removed = 0') };
+        pendingVerifications: await one(`SELECT COUNT(*) n FROM verifications WHERE status = 'pending'`), pendingPosts: await one(`SELECT COUNT(*) n FROM posts WHERE status = 'submitted'`), comments: await one('SELECT COUNT(*) n FROM comments WHERE deleted = 0'), messages: await one('SELECT COUNT(*) n FROM messages'), openReports: await one(`SELECT COUNT(*) n FROM reports WHERE status = 'open'`), videos: await one('SELECT COUNT(*) n FROM videos WHERE removed = 0') };
     }
     if (p === '/admin/file' && M === 'GET') {
       const key = url.searchParams.get('key') || '';
@@ -209,6 +209,18 @@ async function route(req, env, url, u) {
       const obj = await getFile(env, key); if (!obj) fail(404, 'Not found');
       return new Response(obj.body, { headers: { 'Content-Type': obj.mime || 'application/octet-stream', 'Cache-Control': 'private, no-store' } });
     }
+    if (p === '/admin/reports' && M === 'GET') {
+      const reps = (await env.DB.prepare(`SELECT r.id, r.pair, r.reason, r.created_at, u.email AS reporter FROM reports r JOIN users u ON u.id = r.reporter WHERE r.status = 'open' ORDER BY r.created_at DESC LIMIT 50`).all()).results;
+      for (const r of reps) {
+        const names = {};
+        for (const id2 of r.pair.split(':')) { const o = await env.DB.prepare('SELECT u.email, p.member_id, COALESCE(p.name, u.name) AS name FROM users u LEFT JOIN profiles p ON p.user_id = u.id WHERE u.id = ?1').bind(id2).first(); names[id2] = o ? `${o.name || o.email}${o.member_id ? ' (' + o.member_id + ')' : ''}` : id2; }
+        r.people = Object.values(names);
+        r.messages = (await env.DB.prepare('SELECT sender, text, created_at AS at FROM messages WHERE pair = ?1 ORDER BY created_at DESC LIMIT 50').bind(r.pair).all()).results.reverse().map(m => ({ from: names[m.sender], text: m.text, at: m.at }));
+        delete r.pair;
+      }
+      return { reports: reps };
+    }
+    if (seg[1] === 'reports' && seg[2] && M === 'POST') { await env.DB.prepare(`UPDATE reports SET status = 'closed' WHERE id = ?1`).bind(seg[2]).run(); return { ok: true }; }
     if (seg[1] === 'verifications' && seg[2] && M === 'POST') {
       const { action, note } = await body();
       const v = await env.DB.prepare('SELECT * FROM verifications WHERE id = ?1').bind(seg[2]).first(); if (!v) fail(404, 'Not found');
@@ -348,6 +360,152 @@ async function route(req, env, url, u) {
     if (range && obj.range) { h.set('Content-Range', `bytes ${obj.range.offset}-${obj.range.offset + obj.range.length - 1}/${obj.size}`); h.set('Content-Length', String(obj.range.length)); return new Response(obj.body, { status: 206, headers: h }); }
     h.set('Content-Length', String(obj.size));
     return new Response(obj.body, { headers: h });
+  }
+
+  // ---------- private chat ----------
+  // People are addressed by Evidara ID (member_id) or 'admin'. A chat opens after the other person accepts a request,
+  // or straight away if they allow direct messages. Admins can message anyone and anyone can message an admin.
+  // Admins do not read other members' chats; a member can report a conversation, which shares it with the admins.
+  const pairOf = (a, b) => [a, b].sort().join(':');
+  const targetUser = async ref => {
+    if (ref === 'admin') { const a = await env.DB.prepare(`SELECT u.id, u.name, u.role, p.member_id, p.name AS pname, p.verified FROM users u LEFT JOIN profiles p ON p.user_id = u.id WHERE u.role = 'admin' ORDER BY u.created_at LIMIT 1`).first(); return a ? { ...a, admin: true } : null; }
+    const r = await env.DB.prepare(`SELECT u.id, u.name, u.role, p.member_id, p.name AS pname, p.verified, p.role_title, p.institution, p.domain, p.orcid FROM profiles p JOIN users u ON u.id = p.user_id WHERE p.member_id = ?1`).bind(clip(ref, 20)).first();
+    return r ? { ...r, admin: r.role === 'admin' } : null;
+  };
+  const privacyOf = async uid2 => { const r = await env.DB.prepare('SELECT dm_policy, contact FROM privacy WHERE user_id = ?1').bind(uid2).first(); return { dm: r?.dm_policy || 'request', contact: JSON.parse(r?.contact || '{}') }; };
+  const connBetween = async (a, b) => env.DB.prepare('SELECT * FROM connections WHERE (from_user = ?1 AND to_user = ?2) OR (from_user = ?2 AND to_user = ?1) ORDER BY created_at DESC LIMIT 1').bind(a, b).first();
+  const relation = async (me, other) => {
+    if (!me) return { state: 'signed-out', canMessage: false };
+    if (me.id === other.id) return { state: 'self', canMessage: false };
+    if (me.admin || other.admin) return { state: 'open', canMessage: true, reason: 'admin' };
+    const c = await connBetween(me.id, other.id);
+    if (c?.status === 'blocked') return { state: 'blocked', canMessage: false, byMe: c.to_user === me.id };
+    if (c?.status === 'accepted') return { state: 'connected', canMessage: true, connId: c.id };
+    const pv = await privacyOf(other.id);
+    if (pv.dm === 'open' && me.verified && other.verified) return { state: 'open', canMessage: true, reason: 'open' };
+    if (c?.status === 'pending') return { state: c.from_user === me.id ? 'requested' : 'incoming', canMessage: false, connId: c.id };
+    if (c?.status === 'declined' && c.from_user === me.id) return { state: 'declined', canMessage: false };
+    return { state: pv.dm === 'closed' ? 'closed' : 'none', canMessage: false };
+  };
+  const visibleContact = (contact, rel, isAdminViewer) => {
+    const out = {};
+    for (const [k, v] of Object.entries(contact || {})) {
+      if (!v?.value) continue;
+      const vis = v.vis || 'private';
+      if (isAdminViewer || vis === 'members' || (vis === 'connections' && ['connected', 'open'].includes(rel.state) && rel.reason !== 'open')) out[k] = v.value;
+    }
+    return out;
+  };
+
+  if (p === '/me/privacy' && M === 'GET') { need(u); return await privacyOf(u.id); }
+  if (p === '/me/privacy' && M === 'PUT') {
+    need(u); const b = await body(20000);
+    const dm = ['request', 'open', 'closed'].includes(b.dm) ? b.dm : 'request';
+    const contact = {};
+    for (const k of ['email', 'phone', 'website', 'linkedin', 'other']) {
+      const v = b.contact?.[k]; if (!v?.value) continue;
+      contact[k] = { value: clip(String(v.value).trim(), 200), vis: ['members', 'connections', 'private'].includes(v.vis) ? v.vis : 'connections' };
+    }
+    await env.DB.prepare('INSERT INTO privacy (user_id, dm_policy, contact, updated_at) VALUES (?1, ?2, ?3, ?4) ON CONFLICT(user_id) DO UPDATE SET dm_policy = ?2, contact = ?3, updated_at = ?4').bind(u.id, dm, JSON.stringify(contact), now()).run();
+    return { dm, contact };
+  }
+  if (seg[0] === 'people' && seg[1] && M === 'GET') {
+    const t = await targetUser(seg[1]); if (!t || (!t.verified && !t.admin)) fail(404, 'Member not found');
+    const rel = await relation(u, t);
+    const pv = await privacyOf(t.id);
+    return { member: { id: t.member_id || 'admin', name: t.pname || t.name || 'Evidara admin', role: t.admin ? 'Evidara admin' : t.role_title, institution: t.institution, domain: t.domain, orcid: t.orcid, verified: !!t.verified, admin: !!t.admin, dmPolicy: pv.dm },
+      relation: rel, contact: u ? visibleContact(pv.contact, rel, u.admin) : {} };
+  }
+  if (seg[0] === 'connections' && seg[1] && !seg[2] && M === 'POST') {
+    need(u, 'verified'); await rate(env, 'conn:' + u.id, 40);
+    const t = await targetUser(seg[1]); if (!t || (!t.verified && !t.admin)) fail(404, 'Member not found');
+    if (t.id === u.id) fail(400, 'That is you');
+    const rel = await relation(u, t);
+    if (rel.canMessage) return { state: rel.state };
+    if (rel.state === 'blocked') fail(403, 'You cannot contact this member');
+    if (rel.state === 'closed') fail(403, 'This member is not accepting chat requests');
+    if (rel.state === 'requested') return { state: 'requested' };
+    const { note } = await body(4000);
+    if (screenText(note)) fail(400, 'Remove patient-identifying details from your note');
+    if (rel.state === 'incoming') { await env.DB.prepare(`UPDATE connections SET status = 'accepted', decided_at = ?2 WHERE id = ?1`).bind(rel.connId, now()).run(); return { state: 'connected' }; }
+    await env.DB.prepare(`INSERT INTO connections (id, from_user, to_user, status, note, created_at) VALUES (?1, ?2, ?3, 'pending', ?4, ?5)
+      ON CONFLICT(from_user, to_user) DO UPDATE SET status = 'pending', note = ?4, created_at = ?5, decided_at = NULL`).bind(uid(), u.id, t.id, clip(note, 500), now()).run();
+    return { state: 'requested' };
+  }
+  if (seg[0] === 'connections' && seg[1] && seg[2] && M === 'POST') {
+    need(u);
+    const c = await env.DB.prepare('SELECT * FROM connections WHERE id = ?1').bind(seg[1]).first(); if (!c) fail(404, 'Not found');
+    const action = seg[2];
+    if (action === 'withdraw') { if (c.from_user !== u.id) fail(403, 'Not yours'); await env.DB.prepare('DELETE FROM connections WHERE id = ?1').bind(c.id).run(); return { ok: true }; }
+    if (c.to_user !== u.id && !(action === 'block' && c.from_user === u.id)) fail(403, 'Only the person asked can answer');
+    if (action === 'accept') { if (!u.verified && !u.admin) fail(403, 'Only verified members can accept chats'); await env.DB.prepare(`UPDATE connections SET status = 'accepted', decided_at = ?2 WHERE id = ?1`).bind(c.id, now()).run(); }
+    else if (action === 'decline') await env.DB.prepare(`UPDATE connections SET status = 'declined', decided_at = ?2 WHERE id = ?1`).bind(c.id, now()).run();
+    else if (action === 'block') await env.DB.prepare(`UPDATE connections SET status = 'blocked', to_user = ?2, from_user = ?3, decided_at = ?4 WHERE id = ?1`).bind(c.id, u.id, c.from_user === u.id ? c.to_user : c.from_user, now()).run();
+    else fail(400, 'Unknown action');
+    return { ok: true };
+  }
+  if (p === '/connections' && M === 'GET') {
+    need(u);
+    const rows = (await env.DB.prepare(`SELECT c.id, c.status, c.note, c.created_at, c.from_user, c.to_user,
+      pf.member_id AS fromId, COALESCE(pf.name, uf.name) AS fromName, pt.member_id AS toId, COALESCE(pt.name, ut.name) AS toName
+      FROM connections c JOIN users uf ON uf.id = c.from_user JOIN users ut ON ut.id = c.to_user LEFT JOIN profiles pf ON pf.user_id = c.from_user LEFT JOIN profiles pt ON pt.user_id = c.to_user
+      WHERE c.from_user = ?1 OR c.to_user = ?1 ORDER BY c.created_at DESC LIMIT 300`).bind(u.id).all()).results;
+    return { incoming: rows.filter(r => r.to_user === u.id && r.status === 'pending').map(r => ({ id: r.id, memberId: r.fromId, name: r.fromName, note: r.note, at: r.created_at })),
+      outgoing: rows.filter(r => r.from_user === u.id && ['pending', 'declined'].includes(r.status)).map(r => ({ id: r.id, memberId: r.toId, name: r.toName, status: r.status, at: r.created_at })),
+      connected: rows.filter(r => r.status === 'accepted').map(r => r.from_user === u.id ? { id: r.id, memberId: r.toId, name: r.toName } : { id: r.id, memberId: r.fromId, name: r.fromName }),
+      blocked: rows.filter(r => r.status === 'blocked' && r.to_user === u.id).map(r => ({ id: r.id, memberId: r.fromId, name: r.fromName })) };
+  }
+  if (p === '/chats' && M === 'GET') {
+    need(u);
+    const rows = (await env.DB.prepare(`SELECT m.pair, MAX(m.created_at) AS last_at,
+        (SELECT text FROM messages m2 WHERE m2.pair = m.pair AND m2.deleted = 0 ORDER BY created_at DESC LIMIT 1) AS last_text,
+        SUM(CASE WHEN m.sender != ?1 AND m.read_at IS NULL AND m.deleted = 0 THEN 1 ELSE 0 END) AS unread
+      FROM messages m WHERE (m.pair LIKE ?2 OR m.pair LIKE ?3) GROUP BY m.pair ORDER BY last_at DESC LIMIT 100`).bind(u.id, u.id + ':%', '%:' + u.id).all()).results;
+    const out = [];
+    for (const r of rows) {
+      const other = r.pair.split(':').find(x => x !== u.id);
+      const o = await env.DB.prepare('SELECT u.name, u.role, p.member_id, p.name AS pname FROM users u LEFT JOIN profiles p ON p.user_id = u.id WHERE u.id = ?1').bind(other).first();
+      out.push({ with: o?.role === 'admin' && !o?.member_id ? 'admin' : (o?.member_id || 'admin'), name: o?.pname || o?.name || 'Member', admin: o?.role === 'admin', lastAt: r.last_at, last: clip(r.last_text, 120), unread: r.unread });
+    }
+    return { chats: out, unread: out.reduce((n, c) => n + c.unread, 0) };
+  }
+  if (seg[0] === 'chats' && seg[1] && !seg[2] && M === 'GET') {
+    need(u);
+    const t = await targetUser(seg[1]); if (!t) fail(404, 'Member not found');
+    const rel = await relation(u, t);
+    const pair = pairOf(u.id, t.id);
+    const after = url.searchParams.get('after') || '';
+    const has = await env.DB.prepare('SELECT 1 FROM messages WHERE pair = ?1 LIMIT 1').bind(pair).first();
+    if (!rel.canMessage && !has) fail(403, 'Chat opens after the member accepts your request');
+    const msgs = (await env.DB.prepare('SELECT id, sender, text, created_at AS at, read_at AS readAt FROM messages WHERE pair = ?1 AND deleted = 0 AND created_at > ?2 ORDER BY created_at LIMIT 300').bind(pair, after).all()).results
+      .map(m => ({ id: m.id, mine: m.sender === u.id, text: m.text, at: m.at, read: !!m.readAt }));
+    await env.DB.prepare('UPDATE messages SET read_at = ?3 WHERE pair = ?1 AND sender != ?2 AND read_at IS NULL').bind(pair, u.id, now()).run();
+    return { messages: msgs, relation: rel };
+  }
+  if (seg[0] === 'chats' && seg[1] && !seg[2] && M === 'POST') {
+    need(u); await rate(env, 'msg:' + u.id, 600);
+    const t = await targetUser(seg[1]); if (!t) fail(404, 'Member not found');
+    const rel = await relation(u, t);
+    if (!rel.canMessage) fail(403, rel.state === 'blocked' ? 'You cannot message this member' : 'Chat opens after the member accepts your request');
+    const { text } = await body(12000);
+    const t2 = clip(text, 4000).trim(); if (!t2) fail(400, 'Empty message');
+    if (screenText(t2)) fail(400, 'Looks like patient details (ID, phone, date of birth). Remove them before sending.');
+    const id = uid();
+    await env.DB.prepare('INSERT INTO messages (id, pair, sender, text, created_at) VALUES (?1, ?2, ?3, ?4, ?5)').bind(id, pairOf(u.id, t.id), u.id, t2, now()).run();
+    return { id };
+  }
+  if (seg[0] === 'chats' && seg[1] && seg[2] === 'report' && M === 'POST') {
+    need(u);
+    const t = await targetUser(seg[1]); if (!t) fail(404, 'Member not found');
+    const { reason } = await body(4000);
+    await env.DB.prepare('INSERT INTO reports (id, reporter, pair, reason, created_at) VALUES (?1, ?2, ?3, ?4, ?5)').bind(uid(), u.id, pairOf(u.id, t.id), clip(reason, 500), now()).run();
+    return { ok: true };
+  }
+  if (seg[0] === 'messages' && seg[1] && M === 'DELETE') {
+    need(u);
+    const m = await env.DB.prepare('SELECT sender FROM messages WHERE id = ?1').bind(seg[1]).first(); if (!m) fail(404, 'Not found');
+    if (m.sender !== u.id && !u.admin) fail(403, 'Not yours');
+    await env.DB.prepare('UPDATE messages SET deleted = 1 WHERE id = ?1').bind(seg[1]).run(); return { ok: true };
   }
 
   // AI image

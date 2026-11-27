@@ -196,13 +196,15 @@ async function adminOnline() {
   const load = async () => {
     try {
       q = await api('/admin/queue');
+      reports = (await api('/admin/reports')).reports || [];
       const st = await api('/admin/stats');
-      stats.replaceChildren(...[['Members', st.users], ['Verified', st.verified], ['Published', st.published], ['Pending verifications', st.pendingVerifications], ['Pending posts', st.pendingPosts], ['Comments', st.comments], ['Shared videos', st.videos]]
+      stats.replaceChildren(...[['Members', st.users], ['Verified', st.verified], ['Published', st.published], ['Pending verifications', st.pendingVerifications], ['Pending posts', st.pendingPosts], ['Comments', st.comments], ['Messages', st.messages], ['Open reports', st.openReports], ['Shared videos', st.videos]]
         .map(([l, n]) => h('div', { class: 'rcard stat' }, h('div', { class: 'meta' }, l), h('div', { class: 'bignum' }, String(n)))));
     } catch (e) { toast(e.message); }
     drawTabs(); draw();
   };
-  const drawTabs = () => tabs.replaceChildren(...[['verif', `Verifications (${q.verifications.length})`], ['posts', `Submissions (${q.posts.length})`], ['live', 'Published']].map(([k, l]) =>
+  let reports = [];
+  const drawTabs = () => tabs.replaceChildren(...[['verif', `Verifications (${q.verifications.length})`], ['posts', `Submissions (${q.posts.length})`], ['reports', `Reports (${reports.length})`], ['live', 'Published']].map(([k, l]) =>
     h('button', { type: 'button', class: k === tab ? 'on' : '', onclick: () => { tab = k; store.set('adminTab2', k); drawTabs(); draw(); } }, l)));
   const docLink = d => {
     const a = h('button', { class: 'btn small ghost', type: 'button', onclick: async () => {
@@ -237,6 +239,13 @@ async function adminOnline() {
             h('button', { class: 'btn', type: 'button', disabled: v.blockers > 0, onclick: () => act('/admin/posts/' + pq.id, 'approve') }, 'Approve & publish'), note,
             h('button', { class: 'btn ghost', type: 'button', onclick: () => act('/admin/posts/' + pq.id, 'reject', note.value) }, 'Reject')), prev);
       }) : [h('div', { class: 'empty' }, 'No submissions waiting.')]));
+    } else if (tab === 'reports') {
+      body.replaceChildren(h('p', { class: 'note' }, 'You only see a private conversation when a member reports it.'),
+        ...(reports.length ? reports.map(rp => h('div', { class: 'card' }, h('div', { class: 'rhead' }, h('h3', {}, rp.people.join(' ↔ ')), h('span', { class: 'chip warn' }, 'Reported')),
+          h('div', { class: 'meta' }, `By ${rp.reporter} · ${new Date(rp.created_at).toLocaleString()}${rp.reason ? ' · "' + rp.reason + '"' : ''}`),
+          h('div', { class: 'reportmsgs' }, ...rp.messages.map(m => h('div', { class: 'vrow' }, h('b', {}, m.from), h('div', {}, m.text), h('div', { class: 'meta' }, new Date(m.at).toLocaleString())))),
+          h('button', { class: 'btn small', type: 'button', onclick: async () => { try { await api('/admin/reports/' + rp.id, { method: 'POST' }); toast('Report closed'); await load(); } catch (e) { toast(e.message); } } }, 'Mark resolved')))
+          : [h('div', { class: 'empty' }, 'No open reports.')]));
     } else {
       const ps = (await api('/posts?limit=100')).posts || [];
       body.replaceChildren(h('div', { class: 'card' }, h('h3', {}, `Published (${ps.length})`), ...ps.map(p => h('div', { class: 'vrow' }, h('a', { href: `#post/${encodeURIComponent(p.id)}` }, p.title), h('div', { class: 'meta' }, `${p.articleId || 'Community'} · ${new Date(p.publishedAt).toLocaleDateString()}`)))));

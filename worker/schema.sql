@@ -48,3 +48,19 @@ CREATE TABLE IF NOT EXISTS quota (
 CREATE TABLE IF NOT EXISTS files (
   key TEXT PRIMARY KEY, mime TEXT, data BLOB NOT NULL, size INTEGER, created_at TEXT NOT NULL
 );
+-- Private chat: privacy settings, chat requests, messages, reports
+CREATE TABLE IF NOT EXISTS privacy (
+  user_id TEXT PRIMARY KEY, dm_policy TEXT NOT NULL DEFAULT 'request', contact TEXT NOT NULL DEFAULT '{}', updated_at TEXT
+);
+CREATE TABLE IF NOT EXISTS connections (
+  id TEXT PRIMARY KEY, from_user TEXT NOT NULL, to_user TEXT NOT NULL, status TEXT NOT NULL DEFAULT 'pending',
+  note TEXT, created_at TEXT NOT NULL, decided_at TEXT, UNIQUE (from_user, to_user)
+);
+CREATE INDEX IF NOT EXISTS conn_to ON connections (to_user, status);
+CREATE TABLE IF NOT EXISTS messages (
+  id TEXT PRIMARY KEY, pair TEXT NOT NULL, sender TEXT NOT NULL, text TEXT NOT NULL, created_at TEXT NOT NULL, read_at TEXT, deleted INTEGER NOT NULL DEFAULT 0
+);
+CREATE INDEX IF NOT EXISTS msg_pair ON messages (pair, created_at);
+CREATE TABLE IF NOT EXISTS reports (
+  id TEXT PRIMARY KEY, reporter TEXT NOT NULL, pair TEXT NOT NULL, reason TEXT, created_at TEXT NOT NULL, status TEXT NOT NULL DEFAULT 'open'
+);

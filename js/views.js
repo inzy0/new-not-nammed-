@@ -9,6 +9,7 @@ import { mountNotebook } from './notebook.js';
 import { verificationCard } from './admin.js';
 import { libraryFileUrl } from './notebooklm.js';
 import { online, user, api, loadMe, signOut, openSignIn } from './backend.js';
+import { privacyCard } from './chat.js';
 import { draftFromLibrary } from './publish.js';
 
 const view = document.getElementById('view');
@@ -60,7 +61,7 @@ export async function people() {
     h('div', { class: 'row', style: 'margin-bottom:18px' }, q, h('button', { class: 'btn ghost', type: 'button', onclick: go }, 'Search'), idq, h('button', { class: 'btn ghost', type: 'button', onclick: () => (location.hash = `#id/${encodeURIComponent(idq.value)}`) }, 'Look up ID')),
     h('h3', { class: 'h3x' }, 'Verified members'), members,
     h('div', { class: 'rhead', style: 'margin-top:30px' }, h('h3', { class: 'h3x' }, 'Researchers in your field'), h('div', { class: 'row' }, sel, ctry)), autoHead, auto));
-  loadMembers().then(ms => members.replaceChildren(...(ms.length ? ms.map(m => h('div', { class: 'card person-card' },
+  loadMembers().then(ms => members.replaceChildren(...(ms.length ? ms.map(m => h(online() ? 'a' : 'div', { class: 'card person-card', href: online() ? `#member/${encodeURIComponent(m.id)}` : null },
     h('div', { class: 'pc-top' }, h('span', { class: 'av lg' }, (m.name || '?').split(/\s+/).map(p => p[0]).slice(0, 2).join('').toUpperCase()),
       h('div', { class: 'pc-name' }, h('b', {}, m.name), h('div', { class: 'meta' }, [m.role, m.institution].filter(Boolean).join(' · '))), followBtn('m:' + m.id, m.name)),
     h('div', { class: 'chips' }, h('span', { class: 'chip ok' }, 'Verified'), h('span', { class: 'idbadge sm' }, m.id), m.orcid ? h('a', { class: 'chip', href: `https://orcid.org/${m.orcid}`, target: '_blank', rel: 'noopener noreferrer' }, 'ORCID') : null),
@@ -245,6 +246,7 @@ export function profilePage() {
         h('div', { class: 'row', style: 'margin-top:14px' }, h('button', { class: 'btn', type: 'button', onclick: save }, 'Save'))),
       h('div', { class: 'card' }, h('h3', {}, 'Your Evidara ID'), idBox,
         h('p', { class: 'note' }, 'Format: DOMAIN-XXXXXC. For example CARD-7K3QX7 is a cardiology member. The domain code lets anyone browse people by specialty.')))));
+  const pc = privacyCard(); if (pc) view.querySelector('.section')?.append(h('div', { style: 'margin-top:20px' }, pc));
   view.querySelector('.section')?.append(h('div', { class: 'row', style: 'margin-top:20px' }, h('a', { class: 'btn', href: '#publish' }, 'Publish a post'), h('a', { class: 'btn ghost', href: '#people' }, 'People directory'), h('a', { class: 'btn ghost', href: '#library' }, 'My Library'), h('a', { class: 'btn ghost', href: '#admin' }, 'Admin portal')), h('div', { style: 'margin-top:20px' }, verificationCard()));
   showId();
 }
