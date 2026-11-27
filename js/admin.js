@@ -11,6 +11,7 @@ import { verifyPost, renderPost } from './publish.js';
 import { loadPosts, resetPosts } from './feed.js';
 import { loadMembers } from './views.js';
 import { profile } from './core.js';
+import { online, user, api, requireSignedIn } from './backend.js';
 
 const view = document.getElementById('view');
 async function sha256(t) { const b = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(t)); return Array.from(new Uint8Array(b), x => x.toString(16).padStart(2, '0')).join(''); }
@@ -30,6 +31,9 @@ export function verificationCard() {
     }
     fileIn.value = ''; docList.replaceChildren(...docs.map((d, i) => h('button', { type: 'button', class: 'chip pick on', onclick: () => { docs.splice(i, 1); docList.children[i]?.remove(); } }, d.name + ' ×')));
   } });
+  const statusBox = h('div', { class: 'vstatus' });
+  const drawStatus = async () => { if (!online() || !user()) return; try { const rs = (await api('/me/verification')).requests || []; statusBox.replaceChildren(...rs.slice(0, 3).map(r => h('div', { class: 'vrow' }, h('span', { class: `chip ${r.status === 'approved' ? 'ok' : r.status === 'rejected' ? 'bad' : 'warn'}` }, r.status), h('span', { class: 'meta' }, `${new Date(r.created_at).toLocaleDateString()}${r.note ? ' · ' + r.note : ''}`)))); } catch { /* ignore */ } };
+  drawStatus();
   const consent = h('input', { type: 'checkbox', checked: true });
   consent.addEventListener('change', () => (f.consentPublic = consent.checked));
   return h('div', { class: 'card' }, h('h3', {}, 'Get verified'),
@@ -40,7 +44,15 @@ export function verificationCard() {
       h('label', { class: 'f' }, 'Registration council', inp('council', 'e.g. NMC, State Medical Council, INC, PCI')), h('label', { class: 'f' }, 'Registration number', inp('regNo', 'Only the admin sees this'))),
     h('div', { class: 'row', style: 'margin:10px 0' }, h('button', { class: 'btn small ghost', type: 'button', onclick: () => fileIn.click() }, '+ Proof documents (image/PDF, ≤5 MB)'), fileIn, docList),
     h('label', { class: 'row', style: 'gap:8px' }, consent, 'List my name, ID, role, institution and ORCID publicly once verified'),
-    h('div', { class: 'row', style: 'margin-top:12px' }, h('button', { class: 'btn', type: 'button', onclick: () => {
+    h('div', { class: 'row', style: 'margin-top:12px' }, h('button', { class: 'btn', type: 'button', onclick: async () => {
+      if (online()) {
+        if (!requireSignedIn('request verification')) return;
+        if (!f.name || !f.role || !f.council || !f.regNo) { toast('Name, role, council and registration number are required'); return; }
+        if (f.orcid && !validOrcid(f.orcid)) { toast('That ORCID iD fails its check digit'); return; }
+        if (!docs.length) { toast('Add at least one proof document'); return; }
+        try { await api('/me/verification', { method: 'POST', body: { ...f, docs } }); toast('Request sent. The admin will review it.'); drawStatus(); } catch (e) { toast(e.message); }
+        return;
+      }
       const me = profile();
       if (!me.id) { toast('Save your profile first to get an Evidara ID'); return; }
       if (!f.name || !f.role || !f.council || !f.regNo) { toast('Name, role, council and registration number are required'); return; }
@@ -49,11 +61,13 @@ export function verificationCard() {
       download(`evidara-verification-${me.id}.json`, JSON.stringify({ kind: 'evidara-member-request', version: 1, createdAt: new Date().toISOString(), id: me.id, domain: me.id.slice(0, 4), ...f, docs }), 'application/json');
       toast('Request downloaded. Send it privately to the Evidara admin.');
     } }, 'Create verification request')),
-    h('p', { class: 'note' }, 'Your documents go only into the file you send to the admin. They are never published.'));
+    statusBox,
+    h('p', { class: 'note' }, online() ? 'Documents are stored privately and only the admin can open them. They are never published.' : 'Your documents go only into the file you send to the admin. They are never published.'));
 }
 
 // ---------- admin portal ----------
 export async function admin() {
+  if (online()) return adminOnline();
   const hash = store.get('adminHash', null);
   let unlocked = false; try { unlocked = sessionStorage.getItem('evd:adminOk') === hash && !!hash; } catch {}
   if (!unlocked) {
@@ -169,4 +183,67 @@ export async function admin() {
     h('p', { class: 'sub' }, 'Verify people by their Evidara ID, registration and documents. Review and publish posts. Then export to the site.'),
     tabs, body));
   drawTabs(); draw();
+}
+
+// ---------- online admin portal (server roles; no passphrase) ----------
+async function adminOnline() {
+  const u = user();
+  if (!u) { view.replaceChildren(h('section', { class: 'section narrow' }, h('h2', {}, 'Admin portal'), h('div', { class: 'card' }, h('p', {}, 'Sign in with an admin account.'), h('button', { class: 'btn', type: 'button', onclick: () => import('./backend.js').then(b => b.openSignIn()) }, 'Sign in')))); return; }
+  if (!u.admin) { view.replaceChildren(h('section', { class: 'section narrow' }, h('h2', {}, 'Admin portal'), h('div', { class: 'empty' }, 'This account is not an admin.'))); return; }
+  let tab = store.get('adminTab2', 'verif');
+  const body = h('div', {}); const tabs = h('div', { class: 'seg wide' }); const stats = h('div', { class: 'grid statgrid' });
+  let q = { verifications: [], posts: [] };
+  const load = async () => {
+    try {
+      q = await api('/admin/queue');
+      const st = await api('/admin/stats');
+      stats.replaceChildren(...[['Members', st.users], ['Verified', st.verified], ['Published', st.published], ['Pending verifications', st.pendingVerifications], ['Pending posts', st.pendingPosts], ['Comments', st.comments], ['Shared videos', st.videos]]
+        .map(([l, n]) => h('div', { class: 'rcard stat' }, h('div', { class: 'meta' }, l), h('div', { class: 'bignum' }, String(n)))));
+    } catch (e) { toast(e.message); }
+    drawTabs(); draw();
+  };
+  const drawTabs = () => tabs.replaceChildren(...[['verif', `Verifications (${q.verifications.length})`], ['posts', `Submissions (${q.posts.length})`], ['live', 'Published']].map(([k, l]) =>
+    h('button', { type: 'button', class: k === tab ? 'on' : '', onclick: () => { tab = k; store.set('adminTab2', k); drawTabs(); draw(); } }, l)));
+  const docLink = d => {
+    const a = h('button', { class: 'btn small ghost', type: 'button', onclick: async () => {
+      try { const r = await api('/admin/file?key=' + encodeURIComponent(d.key)); const blob = await r.blob(); window.open(URL.createObjectURL(blob), '_blank', 'noopener'); } catch (e) { toast(e.message); }
+    } }, `Open ${d.name}`);
+    return a;
+  };
+  const act = async (path, action, note) => { try { const r = await api(path, { method: 'POST', body: { action, note } }); toast(action === 'approve' ? (r.articleId ? `Published as ${r.articleId}` : 'Approved') : 'Rejected'); await load(); } catch (e) { toast(e.message); } };
+  async function draw() {
+    if (tab === 'verif') {
+      body.replaceChildren(...(q.verifications.length ? q.verifications.map(v => {
+        const note = h('input', { type: 'text', placeholder: 'Reason (shown to the member if rejected)' });
+        const d = v.data; const idc = parseId(d.memberId);
+        return h('div', { class: 'card' }, h('div', { class: 'rhead' }, h('h3', {}, d.name), h('span', { class: 'idbadge' }, d.memberId)),
+          h('div', { class: 'meta' }, `${v.email} · ${d.role} · ${d.institution || ''} · ${new Date(v.created_at).toLocaleString()}`),
+          ...[['Evidara ID', idc.ok ? `${d.memberId} · ${idc.domain}` : 'Invalid', idc.ok ? 'ok' : 'bad'], ['ORCID', d.orcid ? (validOrcid(d.orcid) ? `${d.orcid} (check digit valid)` : 'fails check digit') : 'Not given', d.orcid ? (validOrcid(d.orcid) ? 'ok' : 'bad') : 'warn'],
+            ['Registration', `${d.council} · ${d.regNo}`, 'warn'], ['Documents', `${v.docs.length} attached`, 'warn'], ['Public listing', d.consentPublic ? 'Consented' : 'Not consented', 'ok']]
+            .map(([l, t, s]) => h('div', { class: 'vrow' }, h('span', { class: `chip ${s}` }, l), h('div', { class: 'meta' }, t))),
+          h('p', { class: 'note' }, 'Check the registration number on the council\'s official register before approving.'),
+          h('div', { class: 'row' }, ...v.docs.map(docLink)),
+          h('div', { class: 'row', style: 'margin-top:10px' }, h('button', { class: 'btn', type: 'button', onclick: () => act('/admin/verifications/' + v.id, 'approve') }, 'Approve'), note,
+            h('button', { class: 'btn ghost', type: 'button', onclick: () => act('/admin/verifications/' + v.id, 'reject', note.value) }, 'Reject')));
+      }) : [h('div', { class: 'empty' }, 'No pending verification requests.')]));
+    } else if (tab === 'posts') {
+      body.replaceChildren(...(q.posts.length ? q.posts.map(pq => {
+        const p = pq.data; const v = verifyPost(p); const prev = h('div', { class: 'admin-preview', hidden: true });
+        const note = h('input', { type: 'text', placeholder: 'Reason / requested changes' });
+        return h('div', { class: 'card' }, h('div', { class: 'rhead' }, h('h3', {}, p.title), h('span', { class: `chip ${v.blockers ? 'bad' : v.warnings ? 'warn' : 'ok'}` }, `${v.completeness}% · ${v.blockers} blockers · ${v.warnings} warnings`)),
+          h('div', { class: 'meta' }, `${pq.track === 'evidara' ? 'Publish with Evidara · ' : ''}${p.type} · ${pq.email} · ${new Date(pq.created_at).toLocaleString()}`),
+          h('div', { class: 'row', style: 'margin-top:10px' },
+            h('button', { class: 'btn ghost', type: 'button', onclick: async () => { prev.hidden = !prev.hidden; if (!prev.hidden) await renderPost(prev, p, { draft: true }); } }, 'Preview'),
+            h('button', { class: 'btn', type: 'button', disabled: v.blockers > 0, onclick: () => act('/admin/posts/' + pq.id, 'approve') }, 'Approve & publish'), note,
+            h('button', { class: 'btn ghost', type: 'button', onclick: () => act('/admin/posts/' + pq.id, 'reject', note.value) }, 'Reject')), prev);
+      }) : [h('div', { class: 'empty' }, 'No submissions waiting.')]));
+    } else {
+      const ps = (await api('/posts?limit=100')).posts || [];
+      body.replaceChildren(h('div', { class: 'card' }, h('h3', {}, `Published (${ps.length})`), ...ps.map(p => h('div', { class: 'vrow' }, h('a', { href: `#post/${encodeURIComponent(p.id)}` }, p.title), h('div', { class: 'meta' }, `${p.articleId || 'Community'} · ${new Date(p.publishedAt).toLocaleDateString()}`)))));
+    }
+  }
+  view.replaceChildren(h('section', { class: 'section wide' },
+    h('div', { class: 'rhead' }, h('h2', {}, 'Admin portal'), h('span', { class: 'chip ok' }, `Signed in as ${u.email}`)),
+    stats, tabs, body));
+  load();
 }

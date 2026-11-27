@@ -11,12 +11,38 @@ import * as Pod from './podcast.js';
 import * as Lib from './library.js';
 import { profile, bloomSVG } from './core.js';
 import { countUp } from './anim.js';
+import { online, user, api, requireSignedIn, requireVerified } from './backend.js';
 
 const view = document.getElementById('view');
 
 // ---------- small shared pieces ----------
-export const likes = { has: k => !!store.get('likes', {})[k], toggle(k) { const m = store.get('likes', {}); m[k] ? delete m[k] : (m[k] = 1); store.set('likes', m); return !!m[k]; } };
-export const follows = { has: k => !!store.get('follows', {})[k], toggle(k, name) { const m = store.get('follows', {}); m[k] ? delete m[k] : (m[k] = name || k); store.set('follows', m); return !!m[k]; }, all: () => store.get('follows', {}) };
+export const likes = {
+  has: k => !!store.get('likes', {})[k],
+  toggle(k) { const m = store.get('likes', {}); m[k] ? delete m[k] : (m[k] = 1); store.set('likes', m); return !!m[k]; },
+  set(k, on) { const m = store.get('likes', {}); on ? (m[k] = 1) : delete m[k]; store.set('likes', m); },
+};
+// Like button behaviour shared by cards, paper pages and reels. Online: server toggle with a live count.
+export async function toggleLike(k, btn) {
+  if (online()) {
+    if (!requireSignedIn('like papers')) return;
+    try { const r = await api('/likes/' + encodeURIComponent(k), { method: 'POST' }); likes.set(k, r.liked); paintLike(btn, r.liked, r.count); } catch (e) { toast(e.message); }
+    return;
+  }
+  paintLike(btn, likes.toggle(k));
+}
+export function paintLike(btn, on, count) {
+  if (!btn) return;
+  btn.classList.toggle('on', on); btn.setAttribute('aria-pressed', on ? 'true' : 'false');
+  if (count != null) { let c = btn.querySelector('.lc'); if (!c) { c = h('span', { class: 'lc' }); btn.append(c); } c.textContent = count ? String(count) : ''; }
+}
+// Fetch like counts for everything with data-like on the page.
+export async function refreshLikeCounts(root = document) {
+  if (!online()) return;
+  const btns = [...root.querySelectorAll('[data-like]')]; if (!btns.length) return;
+  const keys = [...new Set(btns.map(b => b.dataset.like))].slice(0, 60);
+  try { const r = await api('/likes?keys=' + keys.map(encodeURIComponent).join(',')); btns.forEach(b => { const k = b.dataset.like; const mine = r.mine.includes(k); likes.set(k, mine); paintLike(b, mine, r.counts[k] || 0); }); } catch { /* ignore */ }
+}
+export const follows = { has: k => !!store.get('follows', {})[k], toggle(k, name) { const m = store.get('follows', {}); m[k] ? delete m[k] : (m[k] = name || k); store.set('follows', m); if (online() && user()) api('/follows/' + encodeURIComponent(k), { method: 'POST', body: { name } }).catch(() => {}); return !!m[k]; }, all: () => store.get('follows', {}) };
 
 export async function share(a) {
   const url = `${location.origin}${location.pathname}#paper/${encodeURIComponent(keyOf(a))}`;
@@ -86,7 +112,8 @@ export function paperCard(a) {
   const sc = score(checks(a));
   const r = reuse(a);
   const href = `#paper/${encodeURIComponent(key)}`;
-  const likeBtn = actionBtn('heart', 'Like', () => { const on = likes.toggle(key); likeBtn.classList.toggle('on', on); likeBtn.setAttribute('aria-pressed', on); }, likes.has(key));
+  const likeBtn = actionBtn('heart', 'Like', () => toggleLike(key, likeBtn), likes.has(key));
+  likeBtn.dataset.like = key;
   return h('article', { class: 'pcard' },
     h('a', { class: 'ptitle', href }, a.title),
     authorChips(a),
@@ -119,7 +146,8 @@ export const FEEDS = [
   { id: 'gems', name: 'Underrated gems', how: 'High-evidence designs (trials, reviews, guidelines) from 1–3 years ago with 3 citations or fewer' },
   { id: 'preprints', name: 'Preprints', how: 'Not yet peer reviewed: newest preprints in your domains' },
   { id: 'india', name: 'India focus', how: 'Papers with an Indian affiliation in your domains, newest first' },
-  { id: 'liked', name: 'Liked', how: 'Papers you liked on this device (community-wide likes arrive with sign-in)' },
+  { id: 'top', name: 'Top liked', how: 'Most liked by Evidara members in the last 7 days' },
+  { id: 'liked', name: 'Liked', how: 'Papers you liked' },
   { id: 'community', name: 'Community', how: 'Posts published on Evidara after admin verification' },
 ];
 
@@ -203,7 +231,7 @@ export async function explore() {
     if (reset) { cursor = '*'; done = false; count = 0; reelBuf = []; list.replaceChildren(...[1, 2, 3].map(() => h('div', { class: 'pcard skeleton' }))); }
     busy = true; sentinel.hidden = false;
     try {
-      if (st.tab === 'liked' || st.tab === 'community') { await loadLocal(st.tab, my); return; }
+      if (['liked', 'community', 'top'].includes(st.tab)) { await loadLocal(st.tab, my); return; }
       const fq = feedQuery(st, st.feeds);
       let raw = fq.raw || '';
       if (!['mustread', 'gems'].includes(st.tab)) raw += DESIGN_Q[st.design] || '';
@@ -217,6 +245,7 @@ export async function explore() {
         if (reuse(a).derivatives) reelBuf.push(a);
         if (count % 6 === 0) addReelStrip();
       }
+      refreshLikeCounts(list);
       if (!r.results.length && reset) list.append(h('div', { class: 'empty' }, 'Nothing here yet. Widen the time window or add domains.'));
       done = !r.next || r.next === cursor || r.results.length < 12;
       cursor = r.next;
@@ -229,8 +258,17 @@ export async function explore() {
   }
   async function loadLocal(kind, my) {
     done = true;
-    if (kind === 'liked') {
-      const keys = Object.keys(store.get('likes', {}));
+    if (kind === 'top') {
+      if (!online()) { list.replaceChildren(h('div', { class: 'empty' }, 'Community likes appear when Evidara accounts are connected.')); status.textContent = ''; return; }
+      const top = ((await api('/likes/top?days=7')).top || []).filter(t => !t.key.startsWith('post:')).slice(0, 20);
+      if (my !== gen) return;
+      list.replaceChildren(...(top.length ? [] : [h('div', { class: 'empty' }, 'No likes in the last 7 days yet.')]));
+      status.textContent = `${top.length} most-liked papers this week`;
+      for (const t of top) { try { const a = await getArticle(t.key); if (my !== gen) return; if (a) list.append(paperCard(a)); } catch { /* skip */ } }
+      refreshLikeCounts(list);
+    } else if (kind === 'liked') {
+      let keys = Object.keys(store.get('likes', {}));
+      if (online() && user()) { try { keys = (await api('/likes/mine')).keys; } catch { /* local */ } }
       list.replaceChildren(...(keys.length ? [] : [h('div', { class: 'empty' }, 'Papers you like appear here. Tap ♥ on any paper.')]));
       status.textContent = `${keys.length} liked on this device`;
       for (const k of keys.slice(0, 40)) { try { const a = await getArticle(k); if (my !== gen) return; if (a) list.append(paperCard(a)); } catch { /* skip */ } }
@@ -291,6 +329,7 @@ export async function loadPosts() {
   if (postsCache) return postsCache;
   try { const r = await fetch('data/posts.json', { cache: 'no-cache' }); postsCache = r.ok ? await r.json() : []; } catch { postsCache = []; }
   if (!Array.isArray(postsCache)) postsCache = [];
+  if (online()) { try { const srv = (await api('/posts?limit=100')).posts || []; const ids = new Set(srv.map(p => p.id)); postsCache = [...srv, ...postsCache.filter(p => !ids.has(p.id))]; } catch { /* static list only */ } }
   // On the admin's own device, approved-but-not-yet-exported posts show too (marked as local preview).
   try { const { idb } = await import('./idb.js'); const local = await idb.get('adm:posts'); if (Array.isArray(local)) { const ids = new Set(postsCache.map(p => p.id)); local.forEach(p => { if (!ids.has(p.id)) postsCache.push({ ...p, localPreview: true }); }); } } catch { /* none */ }
   return postsCache;

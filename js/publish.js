@@ -8,6 +8,7 @@ import { checkDoi } from './api.js';
 import { lint } from './prompts.js';
 import { idb } from './idb.js';
 import { profile } from './core.js';
+import { online, api, requireVerified } from './backend.js';
 import * as Audio from './audio.js';
 import * as Pod from './podcast.js';
 import { videoPlayer } from './vplayer.js';
@@ -246,6 +247,11 @@ export async function publish([draftId, trackArg]) {
     h('button', { class: 'btn ghost', type: 'button', onclick: async () => {
       const v = verifyPost(p);
       if (v.blockers) { toast(`Fix ${v.blockers} blocker(s) in the Verification panel first`); return; }
+      if (online()) {
+        if (!requireVerified('submit for publication')) return;
+        try { await api('/posts', { method: 'POST', body: { post: p, report: v } }); p.status = 'submitted'; await save(true); toast('Submitted. The editor will review it; you will see the status in your drafts.'); } catch (e) { toast(e.message); }
+        return;
+      }
       p.status = 'submitted'; await save(true);
       const pkg = { kind: 'evidara-submission', version: 1, track: p.track || 'community', createdAt: new Date().toISOString(), post: p, report: v };
       download(`evidara-submission-${(p.shortTitle || p.title).replace(/\W+/g, '-').slice(0, 40)}.json`, JSON.stringify(pkg), 'application/json');
@@ -300,6 +306,7 @@ export async function renderPost(container, p, { draft = false } = {}) {
 }
 
 export async function postPage([id]) {
+  if (online() && id && !id.startsWith('draft:')) { try { const r = await api('/posts/' + encodeURIComponent(id)); if (r.post) return renderPost(view, r.post, { draft: r.post.status !== 'published' }); } catch { /* fall back to static */ } }
   if (id?.startsWith('draft:')) {
     const p = await idb.get('pub:' + id.slice(6));
     if (!p) { view.replaceChildren(h('div', { class: 'empty' }, 'Draft not found on this device.')); return; }

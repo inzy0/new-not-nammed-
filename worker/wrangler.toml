@@ -1,4 +1,5 @@
-name = "evidara-ai"
+# Evidara backend (API + AI images + files). Free Cloudflare plan.
+name = "evidara-api"
 main = "src/index.js"
 compatibility_date = "2025-06-01"
 
@@ -7,12 +8,20 @@ binding = "AI"
 
 [[d1_databases]]
 binding = "DB"
-database_name = "evidara-ai"
+database_name = "evidara"
 database_id = "PASTE-ID-FROM-wrangler-d1-create"
 
+[[r2_buckets]]
+binding = "FILES"
+bucket_name = "evidara-files"
+
 [vars]
-ALLOWED_ORIGINS = "https://inzy0.github.io,http://127.0.0.1:5131"
-DAILY_PER_CLIENT = "10"
-DAILY_PER_IP = "30"
+ALLOWED_ORIGINS = "https://inzy0.github.io"
+# Google OAuth client ID (Web application). Same value as googleClientId in the site's js/config.js.
+GOOGLE_CLIENT_ID = ""
+DAILY_PER_USER = "20"
+DAILY_PER_CLIENT = "5"
+DAILY_PER_IP = "40"
 DAILY_GLOBAL = "400"
 STEPS = "6"
+# Admin emails are private: set them with   wrangler secret put ADMIN_EMAILS   (comma-separated)

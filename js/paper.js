@@ -13,7 +13,8 @@ import * as Pod from './podcast.js';
 import * as Vid from './video.js';
 import * as Lib from './library.js';
 import { theme, updateQuotaLine, profile, bloomSVG } from './core.js';
-import { authorChips, likes, share, saveToLibrary } from './feed.js';
+import { authorChips, likes, share, saveToLibrary, toggleLike, refreshLikeCounts } from './feed.js';
+import { online, user, api, requireVerified } from './backend.js';
 
 const view = document.getElementById('view');
 const TABS = [['overview', 'Overview'], ['read', 'Read paper'], ['figures', 'Figures'], ['authors', 'Author statements'], ['discuss', 'Discuss']];
@@ -35,7 +36,8 @@ export async function paper([key, tabArg]) {
     tabsEl.querySelectorAll('button').forEach(b => b.classList.toggle('on', b.textContent === l)); draw(); } }, l)));
 
   const links = [a.doi && ['DOI', `https://doi.org/${a.doi}`], a.pmcid && ['Europe PMC', `https://europepmc.org/article/PMC/${a.pmcid}`], a.pmid && ['PubMed', `https://pubmed.ncbi.nlm.nih.gov/${a.pmid}/`]].filter(Boolean);
-  const likeB = h('button', { class: 'act' + (likes.has(k) ? ' on' : ''), type: 'button', 'aria-label': 'Like', onclick: () => likeB.classList.toggle('on', likes.toggle(k)) }, icon('heart', 18), h('span', {}, 'Like'));
+  const likeB = h('button', { class: 'act' + (likes.has(k) ? ' on' : ''), type: 'button', 'aria-label': 'Like', dataset: { like: k }, onclick: () => toggleLike(k, likeB) }, icon('heart', 18), h('span', {}, 'Like'));
+  setTimeout(() => refreshLikeCounts(view), 0);
   const header = h('header', { class: 'phead' },
     h('div', { class: 'chips' }, h('span', { class: 'chip' }, studyDesign(a)), h('span', { class: 'chip' }, a.journal), h('span', { class: 'chip' }, a.date), h('span', { class: 'chip' }, reuse(a).label), a.source === 'PPR' ? h('span', { class: 'chip warn' }, 'Preprint') : null),
     h('h1', { class: 'ptitle-xl' }, a.title),
@@ -155,6 +157,7 @@ function overview(box, ctx) {
     ctx.abs.length ? h('div', { class: 'abstract' }, ...ctx.abs.map(s => [h('h4', {}, s.title), h('p', {}, s.text)])) : h('p', { class: 'meta' }, ctx.full || ctx.fullErr ? 'No abstract in this record.' : 'Loading abstract from full text…')));
   box.append(podcastCard(ctx));
   if (reuse(a).derivatives) box.append(videoCard(ctx));
+  if (online()) box.append(sharedVideos(ctx));
   box.append(myVideos(ctx));
   if (ctx.full?.figures?.some(f => f.href)) {
     box.append(h('div', { class: 'card' }, h('div', { class: 'rhead' }, h('h3', {}, 'Key figures'), h('button', { class: 'linkbtn', type: 'button', onclick: () => document.querySelectorAll('.seg.wide button')[2].click() }, 'All figures ›')),
@@ -312,6 +315,7 @@ function authors(box, ctx) {
 const PATIENT = [/\b\d{4}\s?\d{4}\s?\d{4}\b/, /\b(MRN|UHID|IP ?No|OPD ?No)\b/i, /\b(DOB|date of birth)\b/i, /\b\d{2}[\/-]\d{2}[\/-](19|20)\d{2}\b/, /\b[6-9]\d{9}\b/, /\b(mr|mrs|ms)\.?\s+[A-Z][a-z]+\s+(aged|age)\b/i];
 const KINDS = { question: 'Question', issue: 'Issue', gap: 'Unresolved gap', comment: 'Comment' };
 function discuss(box, ctx) {
+  if (online()) return discussOnline(box, ctx);
   const k = 'thread:' + keyOf(ctx.a);
   const me = profile();
   const thread = h('div', { class: 'thread', 'aria-live': 'polite' });
@@ -350,4 +354,68 @@ function discuss(box, ctx) {
     h('div', { class: 'composer' }, ta, h('div', { class: 'row' }, kind, h('label', { class: 'row', style: 'gap:6px' }, toA, 'To the authors'),
       h('span', { class: 'meta' }, 'Ctrl+Enter to send'), h('button', { class: 'btn', type: 'button', onclick: send }, 'Send')))));
   draw();
+}
+
+// Shared discussion (server). Anyone can read; verified healthcare members can post.
+function discussOnline(box, ctx) {
+  const thread = h('div', { class: 'thread', 'aria-live': 'polite' });
+  let replyTo = null;
+  const replyBar = h('div', { class: 'replybar', hidden: true });
+  const draw = async () => {
+    try {
+      const cs = (await api('/threads/' + encodeURIComponent(keyOf(ctx.a)))).comments || [];
+      if (!cs.length) { thread.replaceChildren(h('div', { class: 'empty' }, 'No discussion yet. Ask the authors a question, flag an issue, or name a gap you found.')); return; }
+      const bubble = (m, isReply) => h('div', { class: 'bubble' + (isReply ? ' reply' : '') + (m.mine ? ' mine' : '') },
+        h('div', { class: 'bhead' }, h('span', { class: 'av' }, (m.name || '?').split(/\s+/).map(p => p[0]).slice(0, 2).join('').toUpperCase()), h('b', {}, m.name || 'Member'),
+          m.memberId ? h('span', { class: 'idbadge sm' }, m.memberId) : null, m.verified ? h('span', { class: 'chip ok' }, 'Verified') : null,
+          h('span', { class: `chip kind-${m.kind}` }, KINDS[m.kind] || 'Comment'), m.toAuthors ? h('span', { class: 'chip' }, '→ authors') : null,
+          h('span', { class: 'meta' }, new Date(m.at).toLocaleString([], { dateStyle: 'medium', timeStyle: 'short' }))),
+        h('div', { class: 'btext' }, m.text),
+        h('div', { class: 'row' }, !isReply ? h('button', { class: 'linkbtn', type: 'button', onclick: () => { replyTo = m.id; replyBar.hidden = false; replyBar.replaceChildren('Replying to ', h('b', {}, m.name || 'Member'), ' ', h('button', { class: 'linkbtn', type: 'button', onclick: () => { replyTo = null; replyBar.hidden = true; } }, 'cancel')); ta.focus(); } }, 'Reply') : null,
+          m.mine || user()?.admin ? h('button', { class: 'linkbtn', type: 'button', onclick: async () => { try { await api('/comments/' + m.id, { method: 'DELETE' }); draw(); } catch (e) { toast(e.message); } } }, 'Delete') : null));
+      thread.replaceChildren(...cs.filter(c => !c.parent).map(c => [bubble(c, false), ...cs.filter(r => r.parent === c.id).map(r => bubble(r, true))]).flat());
+    } catch (e) { thread.replaceChildren(h('div', { class: 'empty' }, `Could not load the discussion: ${e.message}`)); }
+  };
+  const kind = h('select', { 'aria-label': 'Type' }, ...Object.entries(KINDS).map(([v, l]) => h('option', { value: v }, l)));
+  const toA = h('input', { type: 'checkbox', checked: true, 'aria-label': 'Address to the authors' });
+  const ta = h('textarea', { placeholder: 'Write to the authors and other professionals… (no patient details)', 'aria-label': 'Message', maxlength: 4000 });
+  const send = async () => {
+    const text = ta.value.trim(); if (!text) return;
+    if (!requireVerified('join the discussion')) return;
+    if (PATIENT.some(re => re.test(text))) { toast('Looks like patient details (ID, phone, date of birth). Remove them before posting.'); return; }
+    try { await api('/threads/' + encodeURIComponent(keyOf(ctx.a)), { method: 'POST', body: { text, kind: kind.value, toAuthors: toA.checked, parent: replyTo } }); ta.value = ''; replyTo = null; replyBar.hidden = true; draw(); } catch (e) { toast(e.message); }
+  };
+  ta.addEventListener('keydown', e => { if (e.key === 'Enter' && (e.ctrlKey || e.metaKey)) send(); });
+  box.append(h('div', { class: 'card chat' },
+    h('div', { class: 'rhead' }, h('h3', {}, 'Discuss with the authors'), h('span', { class: 'chip ok' }, 'Live · shared with all members')),
+    h('p', { class: 'meta' }, user()?.verified || user()?.admin ? 'You are posting as a verified member. Never post patient-identifiable information.' : 'Anyone can read. Verified healthcare members can post. Never post patient-identifiable information.'),
+    thread, replyBar,
+    h('div', { class: 'composer' }, ta, h('div', { class: 'row' }, kind, h('label', { class: 'row', style: 'gap:6px' }, toA, 'To the authors'), h('span', { class: 'meta' }, 'Ctrl+Enter to send'), h('button', { class: 'btn', type: 'button', onclick: send }, 'Send')))));
+  draw();
+}
+
+// Shared videos for an article (server, verified uploaders) shown above the private ones.
+export function sharedVideos(ctx) {
+  const key = keyOf(ctx.a);
+  const list = h('div', { class: 'myvids' });
+  const draw = async () => {
+    try {
+      const vs = (await api('/videos/' + encodeURIComponent(key))).videos || [];
+      list.replaceChildren(...(vs.length ? vs.map(v => h('figure', { class: 'myvid' }, h('video', { src: v.url, controls: true, preload: 'metadata', playsinline: true }),
+        h('figcaption', {}, h('b', {}, v.name), h('span', { class: 'meta' }, ` · ${v.byName || 'Member'}${v.memberId ? ' (' + v.memberId + ')' : ''} · ${(v.size / 1048576).toFixed(1)} MB`),
+          v.mine || user()?.admin ? h('button', { class: 'linkbtn', type: 'button', onclick: async () => { try { await api('/videos/id/' + v.id, { method: 'DELETE' }); draw(); } catch (e) { toast(e.message); } } }, ' Remove') : null)))
+        : [h('div', { class: 'meta' }, 'No shared videos yet.')]));
+    } catch (e) { list.replaceChildren(h('div', { class: 'meta' }, `Could not load videos: ${e.message}`)); }
+  };
+  const input = h('input', { type: 'file', accept: 'video/mp4,video/webm,video/quicktime', multiple: true, hidden: true, onchange: async () => {
+    for (const f of input.files) {
+      if (f.size > 95 * 1048576) { toast(`${f.name} is over 95 MB`); continue; }
+      try { toast(`Uploading ${f.name}…`); await api(`/videos/${encodeURIComponent(key)}?name=${encodeURIComponent(f.name)}`, { method: 'POST', raw: f, headers: { 'Content-Type': f.type || 'video/mp4' } }); } catch (e) { toast(e.message); }
+    }
+    input.value = ''; draw();
+  } });
+  draw();
+  return h('div', { class: 'card' }, h('div', { class: 'rhead' }, h('h3', {}, 'Videos shared by members'),
+    h('button', { class: 'btn small', type: 'button', onclick: () => { if (requireVerified('share videos')) input.click(); } }, '+ Share a video')), input,
+    h('p', { class: 'note' }, 'Visible to everyone. Only verified members can share. Never upload videos showing patients or identifiable people without consent.'), list);
 }

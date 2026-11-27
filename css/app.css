@@ -690,3 +690,20 @@ body[data-route="map"] main#view { padding: 16px 20px calc(20px + var(--player-h
 .vis-how summary { cursor: pointer; color: var(--muted); font-size: 13px; }
 .vis-prompt { white-space: pre-wrap; font-size: 12px; max-height: 160px; overflow: auto; }
 @media (prefers-reduced-motion: reduce) { .kb, .vp-img { animation: none !important; } }
+
+/* v0.6 accounts */
+.acct .lbl { display: grid; line-height: 1.2; min-width: 0; }
+.acct .lbl b { font-size: 14px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.acct .lbl small { font-size: 11px; color: var(--muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.acct-pic { width: 26px; height: 26px; border-radius: 50%; object-fit: cover; }
+.acct .av { width: 26px; height: 26px; font-size: 11px; }
+.signin .gbtn { display: flex; justify-content: center; margin: 16px 0; min-height: 44px; }
+.devlogin { display: grid; gap: 8px; margin-top: 12px; padding: 14px; border: 1px dashed var(--line); border-radius: 14px; }
+.lc { font-size: 12px; font-weight: 700; margin-left: 2px; }
+.lc:empty { display: none; }
+.rbtn .lc { margin: 0; }
+.acctcard { margin-bottom: 16px; }
+.statgrid { grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); margin-bottom: 16px; }
+.stat .bignum { font-size: 26px; }
+.vstatus { display: grid; gap: 4px; margin-top: 10px; }
+@media (max-width: 760px) { #acct .snav-item .lbl small { display: none; } }

@@ -4,7 +4,7 @@ A free platform for healthcare professionals and researchers: **read → verify 
 
 **Live site:** https://inzy0.github.io/new-not-nammed-/
 
-## What works now (v0.5)
+## What works now (v0.6)
 
 | Part | What it does |
 |---|---|
@@ -19,7 +19,8 @@ A free platform for healthcare professionals and researchers: **read → verify 
 | **People** | Auto-listed: verified members, plus top researchers in your field (OpenAlex), worldwide or India. Follow anyone. Search and ID lookup stay available. |
 | **Verification card** | Retraction, corrections, preprint or journal, study design, licence, funding, COI, data availability, registration |
 | **Study visuals** | Every paper gets an **Evidara design cover**, drawn in the browser from its title and study type (trial, synthesis, cohort, case, guideline, review, lab, preprint). It is free, instant and used in the feed, reels and video. The **Visuals** gallery on each paper shows AI illustrations first (labelled "AI illustration, not from the paper"), then the design cover, then the article's **official figures**. AI prompts are built from the title, MeSH terms and keywords plus a style for the study type, and always forbid text, numbers, faces and patients. Any image can be set as the paper's cover. |
-| **AI image service** | `worker/`: a Cloudflare Worker running **FLUX.1 schnell** on Workers AI (free daily allowance) with per-person, per-network and site-wide daily limits (D1), an origin allow-list and a safety screen. Deploy it and set `aiWorkerUrl` in `js/config.js` (see `worker/README.md`). Workers AI has no video model, so videos animate the illustrations and figures with narration. |
+| **Backend** | `worker/`: one Cloudflare Worker with D1 and R2 that runs accounts, roles, verification, publishing, discussion, likes, follows, library, videos and AI images. Tested with 60 API checks plus a full browser run on Cloudflare's local runtime. |
+| **AI image service** | Part of the backend: **FLUX.1 schnell** on Workers AI (free daily allowance) with per-person, per-network and site-wide daily limits (D1), an origin allow-list and a safety screen. Deploy it and set `aiWorkerUrl` in `js/config.js` (see `worker/README.md`). Workers AI has no video model, so videos animate the illustrations and figures with narration. |
 | **Map** | **Universe**: every domain is a planet (size = new open-access papers in 30 days, live). Click to land on **Earth**: institutions publishing in that domain at their real coordinates (OpenAlex), zoom to street level; each place shows its people, studies and collaboration lines. **Articles**: every author institution of one study, connected. |
 | **Publish with us** | A completed-studies-only track: pathway (prepare, submit, screening, verification, review, decision, release), stricter checks, an **Evidara Article ID** (EVD-YYYY-NNNNN) on approval, and the article goes into feeds, Reels and Podcasts with its own audio and video. Authors keep copyright (CC BY or CC BY-NC). DOIs and indexing are not offered yet. |
 | **NotebookLM bridge** | From the Studio notebook: send sources to your own Google Drive (when Google sign-in is configured) or download a NotebookLM pack; open NotebookLM; import the Audio/Video Overview back into your Library as "Ready to push". |
@@ -27,11 +28,10 @@ A free platform for healthcare professionals and researchers: **read → verify 
 | **Design** | Frosted glass, 3D tilt with light glare, a sliding segment indicator, spring motion, a moving background, a welcome screen to pick your fields, and an About page |
 | **Also** | Citations (Vancouver/AMA/APA/BibTeX), Library with schedule and calendar export, Evidara IDs (`CARD-7K3QX7` style, typo-catching check character), 5 theme templates, a moving background, page transitions and scroll animations (off when the device asks for reduced motion) |
 
-## How publishing works on a free static site
+## Two modes
 
-Members send a **verification request** (from Profile) or a **submission package** (from Publish) to the admin
-privately. The admin reviews it in the Admin portal and exports `data/members.json` and `data/posts.json`, which are
-committed to this repository. Only repository access can publish. Documents and registration numbers are never exported.
+- **Live mode (backend connected):** set `apiUrl` and `googleClientId` in `js/config.js` after deploying `worker/` (see `worker/README.md`). This turns on Google sign-in, server-issued Evidara IDs, verification with private documents, the online Admin portal, publishing with Article IDs, shared discussion, likes and **Top liked**, follows, library sync, shared article videos and AI illustrations for everyone.
+- **This-device mode (no backend):** everything else works in the browser. Verification and publishing use package files, and the admin exports `data/members.json` / `data/posts.json` to publish.
 
 ## Rules the platform keeps
 

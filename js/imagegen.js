@@ -8,6 +8,7 @@ import { idb } from './idb.js';
 import { CONFIG } from './config.js';
 import { studyDesign } from './verify.js';
 import { store } from './util.js';
+import { online, api } from './backend.js';
 
 // ---------- topic + concepts from the record ----------
 const GENERIC_MESH = /^(humans?|male|female|adult|aged|middle aged|young adult|adolescent|child|infant|animals?|mice|rats|retrospective studies|prospective studies|cohort studies|cross-sectional studies|risk factors|treatment outcome|follow-up studies|time factors|surveys and questionnaires|incidence|prevalence)$/i;
@@ -123,13 +124,17 @@ export function designCover(a, { w = 1280, h = 720, withText = true } = {}) {
 export function coverDataUrl(a, opts) { try { return designCover(a, opts).toDataURL('image/jpeg', 0.86); } catch { return ''; } }
 
 // ---------- AI illustrations through the Evidara AI Worker ----------
-export const aiReady = () => !!CONFIG.aiWorkerUrl;
+export const aiReady = () => online() || !!CONFIG.aiWorkerUrl;
 function clientId() { let id = store.get('clientId', null); if (!id) { id = crypto.getRandomValues(new Uint32Array(4)).join('-'); store.set('clientId', id); } return id; }
 export async function generateAI(key, prompt) {
-  if (!aiReady()) throw new Error('AI image generation is not connected yet (the site owner needs to deploy the Evidara AI Worker)');
+  if (!aiReady()) throw new Error('AI image generation is not connected yet (the site owner needs to deploy the Evidara API)');
+  let j;
+  if (online()) j = await api('/image', { method: 'POST', body: { prompt, key }, headers: { 'X-Evidara-Client': clientId() } });
+  else {
   const r = await fetch(CONFIG.aiWorkerUrl.replace(/\/$/, '') + '/image', { method: 'POST', headers: { 'Content-Type': 'application/json', 'X-Evidara-Client': clientId() }, body: JSON.stringify({ prompt, key }) });
-  const j = await r.json().catch(() => ({}));
+  j = await r.json().catch(() => ({}));
   if (!r.ok) throw new Error(j.error || `AI service error ${r.status}`);
+  }
   const item = { src: `data:${j.mime || 'image/jpeg'};base64,${j.image}`, prompt, model: j.model || 'FLUX.1 schnell', at: Date.now(), left: j.left };
   const list = (await idb.get('aiimg:' + key)) || [];
   list.unshift(item); await idb.set('aiimg:' + key, list.slice(0, 8));

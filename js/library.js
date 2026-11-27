@@ -2,11 +2,28 @@
 // Evidara destination (Reel, Feed post, Video, Podcast, Community article), schedule time and where the file is stored. Browser storage for now; moves to the
 // server database when accounts go live (see PLAN). Export to JSON and calendar (.ics) keeps nothing locked in.
 import { store, uid } from './util.js';
+import { online, user, api } from './backend.js';
 
 export const STATUSES = [['idea', 'Idea'], ['made', 'Made'], ['ready', 'Ready to push'], ['scheduled', 'Scheduled'], ['posted', 'Pushed to Evidara']];
 
 export function all() { return store.get('library', []); }
-function save(list) { store.set('library', list); }
+let pushT = 0;
+function save(list) {
+  store.set('library', list);
+  if (online() && user()) { clearTimeout(pushT); pushT = setTimeout(() => api('/library', { method: 'PUT', body: { items: all() } }).catch(() => {}), 900); }
+}
+// On sign-in: merge the server copy with this device (newest version of each item wins), then push the result.
+export async function syncLibrary() {
+  if (!online() || !user()) return;
+  try {
+    const remote = (await api('/library')).items || [];
+    const byId = new Map(remote.map(x => [x.id, x]));
+    for (const x of all()) { const r = byId.get(x.id); if (!r || (x.updatedAt || x.createdAt) > (r.updatedAt || r.createdAt)) byId.set(x.id, x); }
+    const merged = [...byId.values()].sort((a, b) => (b.createdAt || '').localeCompare(a.createdAt || ''));
+    store.set('library', merged);
+    await api('/library', { method: 'PUT', body: { items: merged } });
+  } catch { /* stay local */ }
+}
 
 export function add(item) {
   const list = all();

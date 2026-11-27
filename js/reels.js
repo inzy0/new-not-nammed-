@@ -10,7 +10,7 @@ import { figImg } from './figures.js';
 import { coverDataUrl } from './imagegen.js';
 import * as Pod from './podcast.js';
 import { profile, bloomSVG } from './core.js';
-import { likes, share, saveToLibrary, loadPosts } from './feed.js';
+import { likes, share, saveToLibrary, loadPosts, toggleLike } from './feed.js';
 import { postSections, postEpisode } from './publish.js';
 
 const view = document.getElementById('view');
@@ -60,7 +60,7 @@ function reelEl(a) {
   el._stop = () => { clearInterval(timer); timer = null; };
   el.addEventListener('click', e => { if (e.target.closest('.rside, a, button')) return; step(); el._stop(); el._play(); });
 
-  const likeB = h('button', { class: 'rbtn' + (likes.has(key) ? ' on' : ''), type: 'button', 'aria-label': 'Like', onclick: () => likeB.classList.toggle('on', likes.toggle(key)) }, icon('heart', 26), h('span', {}, 'Like'));
+  const likeB = h('button', { class: 'rbtn' + (likes.has(key) ? ' on' : ''), type: 'button', 'aria-label': 'Like', dataset: { like: key }, onclick: () => toggleLike(key, likeB) }, icon('heart', 26), h('span', {}, 'Like'));
   el.append(h('div', { class: 'rside' }, likeB,
     h('button', { class: 'rbtn', type: 'button', 'aria-label': 'Listen', onclick: () => Pod.enqueue(a, 'brief', { playNow: true }) }, icon('volume', 26), h('span', {}, 'Listen')),
     h('button', { class: 'rbtn', type: 'button', 'aria-label': 'Save', onclick: () => saveToLibrary(a) }, icon('bookmark', 26), h('span', {}, 'Save')),

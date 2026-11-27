@@ -5,7 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <title>Evidara</title>
 <meta name="description" content="Live open-access research feed with verification, citations, reels, podcasts and discussion for healthcare professionals.">
-<meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' https://accounts.google.com; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src https://fonts.gstatic.com; connect-src 'self' https://www.ebi.ac.uk https://api.openalex.org https://www.googleapis.com https://*.workers.dev; img-src 'self' data: blob: https:; media-src 'self' blob:; frame-src https://www.youtube-nocookie.com https://player.vimeo.com https://accounts.google.com; worker-src 'self' blob:; object-src 'none'; base-uri 'none'; form-action 'none'">
+<meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' https://accounts.google.com; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src https://fonts.gstatic.com; connect-src 'self' https://www.ebi.ac.uk https://api.openalex.org https://www.googleapis.com https://*.workers.dev; img-src 'self' data: blob: https:; media-src 'self' blob: https://*.workers.dev; frame-src https://www.youtube-nocookie.com https://player.vimeo.com https://accounts.google.com; worker-src 'self' blob:; object-src 'none'; base-uri 'none'; form-action 'none'">
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link rel="preconnect" href="https://www.ebi.ac.uk" crossorigin>
@@ -20,6 +20,7 @@
     <a class="brand" href="#feed"><span class="logo">EV</span><span class="brand-name">Evidara</span></a>
     <nav class="snav" id="snav"></nav>
     <div class="side-foot">
+      <div id="acct"></div>
       <button class="snav-item" id="themeBtn" type="button" aria-label="Change theme"><span class="ico" id="themeIco"></span><span class="lbl">Theme</span></button>
       <div class="quota" id="quotaLine"></div>
       <div class="side-links"><a href="https://github.com/inzy0/new-not-nammed-/blob/main/docs/ROADMAP.md" target="_blank" rel="noopener noreferrer">Roadmap</a> · <a href="https://github.com/inzy0/new-not-nammed-/issues" target="_blank" rel="noopener noreferrer">Feedback</a></div>

@@ -12,6 +12,8 @@ import { publish, postPage } from './publish.js';
 import { admin } from './admin.js';
 import { mapPage } from './map.js';
 import { publishWithUs, about, onboarding } from './about.js';
+import { loadMe, mountAccount, onAuth } from './backend.js';
+import { syncLibrary } from './library.js';
 
 const view = document.getElementById('view');
 const NAV = [
@@ -43,6 +45,10 @@ function route() {
 }
 window.addEventListener('hashchange', route);
 window.addEventListener('unhandledrejection', e => { console.warn('Unhandled:', e.reason); });
+mountAccount(document.getElementById('acct'));
+loadMe().then(u => { if (u) syncLibrary(); });
+let lastUid = null;
+onAuth(u => { const id = u?.id || null; if (id !== lastUid) { lastUid = id; if (u) syncLibrary(); const r = location.hash.split('/')[0]; if (['#profile', '#admin', '#publish'].includes(r)) route(); } });
 startBackground();
 startReveal();
 startTilt();

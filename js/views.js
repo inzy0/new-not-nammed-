@@ -8,6 +8,7 @@ import { profile, theme, vars } from './core.js';
 import { mountNotebook } from './notebook.js';
 import { verificationCard } from './admin.js';
 import { libraryFileUrl } from './notebooklm.js';
+import { online, user, api, loadMe, signOut, openSignIn } from './backend.js';
 import { draftFromLibrary } from './publish.js';
 
 const view = document.getElementById('view');
@@ -72,6 +73,7 @@ export async function loadMembers() {
   if (membersCache) return membersCache;
   try { const r = await fetch('data/members.json', { cache: 'no-cache' }); membersCache = r.ok ? await r.json() : []; } catch { membersCache = []; }
   if (!Array.isArray(membersCache)) membersCache = [];
+  if (online()) { try { const srv = (await api('/members')).members || []; const ids = new Set(srv.map(m => m.id)); membersCache = [...srv, ...membersCache.filter(m => !ids.has(m.id))]; } catch { /* static list only */ } }
   return membersCache;
 }
 
@@ -197,6 +199,9 @@ function toLocalInput(iso) { const d = new Date(iso); d.setMinutes(d.getMinutes(
 
 // ---------------- PROFILE ----------------
 export function profilePage() {
+  const u = user();
+  if (online() && u?.profile) { const sp = u.profile; store.set('profile', { ...profile(), name: sp.name || u.name || '', domain: sp.domain || profile().domain, id: sp.member_id || '', audience: sp.audience || profile().audience, tone: sp.tone || profile().tone }); }
+  else if (online() && u && !profile().name) store.set('profile', { ...profile(), name: u.name || '' });
   const pr = profile();
   const name = h('input', { type: 'text', value: pr.name, placeholder: 'Your name', 'aria-label': 'Name' });
   const dom = h('select', { 'aria-label': 'Domain' }, ...DOMAINS.map(([c, l]) => h('option', { value: c, selected: c === pr.domain }, `${l} (${c})`)));
@@ -210,7 +215,15 @@ export function profilePage() {
       h('div', { class: 'row' }, h('button', { class: 'btn small', type: 'button', onclick: () => copyText(cur.id) }, 'Copy ID')))
       : h('p', { class: 'meta' }, 'No ID yet. Choose your domain and save.'));
   };
-  const save = () => {
+  const save = async () => {
+    if (online() && user()) {
+      try {
+        const r = await api('/me/profile', { method: 'PUT', body: { name: name.value.trim(), domain: dom.value, audience: aud.value, tone: tone.value, role_title: user().profile?.role_title || '', institution: user().profile?.institution || '', orcid: user().profile?.orcid || '' } });
+        store.set('profile', { ...profile(), name: name.value.trim(), domain: dom.value, audience: aud.value, tone: tone.value, id: r.profile.member_id });
+        await loadMe(true); showId(); toast('Saved to your Evidara account');
+      } catch (e) { toast(e.message); }
+      return;
+    }
     const cur = profile();
     const changedDomain = cur.id && cur.id.slice(0, 4) !== dom.value;
     const next = { ...cur, name: name.value.trim(), domain: dom.value, audience: aud.value, tone: tone.value };
@@ -219,7 +232,11 @@ export function profilePage() {
   };
   view.append(h('section', { class: 'section' },
     h('h2', {}, 'Profile'),
-    h('p', { class: 'sub' }, 'Your domain sets your feed, your prompts and the first part of your Evidara ID. Saved in this browser for now. Sign-in and credential verification come with the cloud step, and your ID is reserved then.'),
+    online() && user() ? h('div', { class: 'card acctcard' }, h('div', { class: 'rhead' }, h('div', {}, h('b', {}, user().name || user().email), h('div', { class: 'meta' }, user().email)),
+        h('div', { class: 'row' }, user().admin ? h('span', { class: 'chip ok' }, 'Admin') : null, user().verified ? h('span', { class: 'chip ok' }, 'Verified member') : h('span', { class: 'chip warn' }, 'Not verified yet'),
+          h('button', { class: 'btn small ghost', type: 'button', onclick: async () => { await signOut(); location.hash = '#feed'; } }, 'Sign out')))) :
+      online() ? h('div', { class: 'card acctcard' }, h('div', { class: 'rhead' }, h('b', {}, 'Sign in to keep your ID, library and verification on every device'), h('button', { class: 'btn small', type: 'button', onclick: openSignIn }, 'Sign in'))) : null,
+    h('p', { class: 'sub' }, online() && user() ? 'Your domain sets your feed, your prompts and the first part of your Evidara ID, which the server keeps unique.' : 'Your domain sets your feed, your prompts and the first part of your Evidara ID. Saved in this browser until you sign in.'),
     h('div', { class: 'split' },
       h('div', { class: 'card' },
         h('div', { style: 'display:grid;gap:12px' },
