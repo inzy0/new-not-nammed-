@@ -60,7 +60,7 @@ function normalize(r) {
     journal: ji.journal?.title || r.bookOrReportDetails?.publisher || (r.source === 'PPR' ? 'Preprint' : ''),
     journalAbbr: ji.journal?.isoabbreviation || ji.journal?.medlineAbbreviation || ji.journal?.title || '',
     volume: ji.volume || '', issue: ji.issue || '', pages: r.pageInfo || '',
-    year: r.pubYear || '', date: r.firstPublicationDate || '',
+    year: r.pubYear || (r.firstPublicationDate || r.electronicPublicationDate || '').slice(0, 4), date: r.firstPublicationDate || '',
     abstractHtml: r.abstractText || '',
     pubTypes: r.pubTypeList?.pubType || [],
     isOA: r.isOpenAccess === 'Y', license: (r.license || '').toLowerCase(),
