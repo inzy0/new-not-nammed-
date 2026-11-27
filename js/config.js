@@ -6,4 +6,6 @@ export const CONFIG = {
   googleClientId: '',
   notebookLmUrl: 'https://notebooklm.google.com/',
   driveFolderName: 'Evidara → NotebookLM',
+  // URL of the deployed Evidara AI Worker (see worker/README.md), e.g. https://evidara-ai.<you>.workers.dev
+  aiWorkerUrl: '',
 };

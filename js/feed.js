@@ -6,6 +6,7 @@ import { searchArticles, getArticle, getFullText, abstractSections, keyOf, openA
 import { checks, score, studyDesign, reuse } from './verify.js';
 import { STYLES as CITE } from './cite.js';
 import { figImg } from './figures.js';
+import { coverDataUrl, aiImages, coverChoice } from './imagegen.js';
 import * as Pod from './podcast.js';
 import * as Lib from './library.js';
 import { profile, bloomSVG } from './core.js';
@@ -53,12 +54,21 @@ function pumpLazy() {
 }
 const io = 'IntersectionObserver' in window ? new IntersectionObserver(entries => {
   for (const e of entries) if (e.isIntersecting) { io.unobserve(e.target); const fn = e.target._load; if (fn) { lazyQ.push(fn); pumpLazy(); } }
-}, { rootMargin: '600px 0px' }) : null;
+}, { rootMargin: '1000px 0px' }) : null;
 
 function mediaFor(a, tall = false) {
   const box = h('div', { class: 'media' + (tall ? ' tall' : '') }, h('div', { class: 'media-ph' }, bloomSVG(), h('span', {}, studyDesign(a))));
-  if (!a.pmcid || !a.hasFullText) return box;
+  const k = keyOf(a);
+  const cover = async () => {
+    const choice = coverChoice.get(k);
+    if (choice?.ai != null) { const ai = await aiImages(k); if (ai[choice.ai]) { box.replaceChildren(h('img', { class: 'media-img cover-img kb', src: ai[choice.ai].src, alt: 'AI illustration of the study topic' }), h('div', { class: 'media-cap' }, h('b', {}, 'AI illustration'), ' · not from the paper')); return true; } }
+    const src = coverDataUrl(a, tall ? { w: 540, h: 960 } : { w: 960, h: 540 });
+    if (src) box.replaceChildren(h('img', { class: 'media-img cover-img', src, alt: `${studyDesign(a)} cover` }));
+    return choice === 'design';
+  };
   box._load = async () => {
+    const pinned = await cover();
+    if (pinned || !a.pmcid || !a.hasFullText) return;
     try {
       const full = await getFullText(a.pmcid);
       const fig = full.figures.find(f => f.href);

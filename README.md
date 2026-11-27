@@ -4,7 +4,7 @@ A free platform for healthcare professionals and researchers: **read → verify 
 
 **Live site:** https://inzy0.github.io/new-not-nammed-/
 
-## What works now (v0.4)
+## What works now (v0.5)
 
 | Part | What it does |
 |---|---|
@@ -18,6 +18,8 @@ A free platform for healthcare professionals and researchers: **read → verify 
 | **Admin portal** | Passphrase-protected on the admin's device. Import member verification requests and submissions, check IDs, ORCIDs and documents, approve, then export `members.json` / `posts.json` to publish to everyone. |
 | **People** | Auto-listed: verified members, plus top researchers in your field (OpenAlex), worldwide or India. Follow anyone. Search and ID lookup stay available. |
 | **Verification card** | Retraction, corrections, preprint or journal, study design, licence, funding, COI, data availability, registration |
+| **Study visuals** | Every paper gets an **Evidara design cover**, drawn in the browser from its title and study type (trial, synthesis, cohort, case, guideline, review, lab, preprint). It is free, instant and used in the feed, reels and video. The **Visuals** gallery on each paper shows AI illustrations first (labelled "AI illustration, not from the paper"), then the design cover, then the article's **official figures**. AI prompts are built from the title, MeSH terms and keywords plus a style for the study type, and always forbid text, numbers, faces and patients. Any image can be set as the paper's cover. |
+| **AI image service** | `worker/`: a Cloudflare Worker running **FLUX.1 schnell** on Workers AI (free daily allowance) with per-person, per-network and site-wide daily limits (D1), an origin allow-list and a safety screen. Deploy it and set `aiWorkerUrl` in `js/config.js` (see `worker/README.md`). Workers AI has no video model, so videos animate the illustrations and figures with narration. |
 | **Map** | **Universe**: every domain is a planet (size = new open-access papers in 30 days, live). Click to land on **Earth**: institutions publishing in that domain at their real coordinates (OpenAlex), zoom to street level; each place shows its people, studies and collaboration lines. **Articles**: every author institution of one study, connected. |
 | **Publish with us** | A completed-studies-only track: pathway (prepare, submit, screening, verification, review, decision, release), stricter checks, an **Evidara Article ID** (EVD-YYYY-NNNNN) on approval, and the article goes into feeds, Reels and Podcasts with its own audio and video. Authors keep copyright (CC BY or CC BY-NC). DOIs and indexing are not offered yet. |
 | **NotebookLM bridge** | From the Studio notebook: send sources to your own Google Drive (when Google sign-in is configured) or download a NotebookLM pack; open NotebookLM; import the Audio/Video Overview back into your Library as "Ready to push". |

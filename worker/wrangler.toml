@@ -1,0 +1,18 @@
+name = "evidara-ai"
+main = "src/index.js"
+compatibility_date = "2025-06-01"
+
+[ai]
+binding = "AI"
+
+[[d1_databases]]
+binding = "DB"
+database_name = "evidara-ai"
+database_id = "PASTE-ID-FROM-wrangler-d1-create"
+
+[vars]
+ALLOWED_ORIGINS = "https://inzy0.github.io,http://127.0.0.1:5131"
+DAILY_PER_CLIENT = "10"
+DAILY_PER_IP = "30"
+DAILY_GLOBAL = "400"
+STEPS = "6"

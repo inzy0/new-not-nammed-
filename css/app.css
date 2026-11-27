@@ -666,3 +666,27 @@ body[data-route="map"] main#view { padding: 16px 20px calc(20px + var(--player-h
 .cols > .center { overflow-x: clip; overflow-y: visible; }
 .hero-right { overflow: hidden; }
 @media (max-width: 1500px) { .numeral .ring { width: 110px; height: 110px; font-size: 46px; } .numeral .ghost { font-size: 46px; } .hero h1 { font-size: clamp(38px, 4.4vw, 64px); } }
+
+/* v0.5 visuals */
+.visuals .rhead { margin-bottom: 10px; }
+.vis-stage { position: relative; aspect-ratio: 16 / 9; border-radius: 18px; overflow: hidden; background: #0b0810; display: grid; place-items: center; box-shadow: inset 0 0 0 1px var(--glass-border); }
+.vis-img { width: 100%; height: 100%; object-fit: contain; background: #fff; animation: fadein .6s ease both; }
+.vis-img.kb, .cover-img { object-fit: cover; background: #0b0810; }
+.kb { animation: kenburns 18s ease-in-out infinite alternate; transform-origin: 60% 40%; }
+@keyframes kenburns { from { transform: scale(1) translate(0, 0); } to { transform: scale(1.12) translate(-2%, -1.5%); } }
+.vp-img { animation: fadein .6s ease both, kenburns 14s ease-in-out infinite alternate; }
+.vis-nav { position: absolute; top: 50%; transform: translateY(-50%); width: 42px; height: 42px; border-radius: 50%; border: 0; background: rgba(0,0,0,.45); color: #fff; font-size: 26px; cursor: pointer; backdrop-filter: blur(8px); transition: background .2s, transform .2s; }
+.vis-nav:hover { background: rgba(0,0,0,.7); transform: translateY(-50%) scale(1.08); }
+.vis-nav.prev { left: 12px; } .vis-nav.next { right: 12px; }
+.vis-label { display: flex; flex-wrap: wrap; gap: 10px; align-items: center; margin: 10px 0; }
+.vis-cap { flex: 1 1 260px; }
+.vis-thumbs { display: flex; gap: 10px; overflow-x: auto; padding: 4px 2px 8px; scrollbar-width: thin; }
+.vis-thumb { position: relative; flex: none; width: 112px; aspect-ratio: 16 / 10; border-radius: 12px; overflow: hidden; border: 2px solid transparent; padding: 0; cursor: pointer; background: #fff; transition: transform .2s var(--spring), border-color .2s; }
+.vis-thumb img { width: 100%; height: 100%; object-fit: cover; }
+.vis-thumb span { position: absolute; left: 6px; bottom: 6px; font-size: 10px; font-weight: 700; color: #fff; background: rgba(0,0,0,.6); padding: 1px 6px; border-radius: 999px; }
+.vis-thumb.ai span { background: var(--warn); color: #000; }
+.vis-thumb.on { border-color: var(--accent); transform: translateY(-2px); }
+.vis-thumb:hover { transform: translateY(-2px); }
+.vis-how summary { cursor: pointer; color: var(--muted); font-size: 13px; }
+.vis-prompt { white-space: pre-wrap; font-size: 12px; max-height: 160px; overflow: auto; }
+@media (prefers-reduced-motion: reduce) { .kb, .vp-img { animation: none !important; } }

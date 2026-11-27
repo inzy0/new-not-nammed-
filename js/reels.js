@@ -7,6 +7,7 @@ import { searchArticles, getArticle, getFullText, abstractSections, keyOf } from
 import { studyDesign, reuse } from './verify.js';
 import { domainByCode } from './ids.js';
 import { figImg } from './figures.js';
+import { coverDataUrl } from './imagegen.js';
 import * as Pod from './podcast.js';
 import { profile, bloomSVG } from './core.js';
 import { likes, share, saveToLibrary, loadPosts } from './feed.js';
@@ -27,7 +28,7 @@ function reelEl(a) {
   const key = keyOf(a);
   const slides = h('div', { class: 'rslides' });
   const bars = h('div', { class: 'rbars' });
-  const bg = h('div', { class: 'rbg' }, bloomSVG());
+  const bg = h('div', { class: 'rbg' }, h('img', { class: 'rfig cover-img kb', src: coverDataUrl(a, { w: 540, h: 960, withText: false }), alt: '' }));
   const el = h('section', { class: 'reel', dataset: { key } }, bg, h('div', { class: 'rshade' }), bars, slides);
   let data = { finding: '', limitation: '', fig: null }, built = false, timer = null, idx = 0;
 

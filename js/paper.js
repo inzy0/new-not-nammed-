@@ -7,6 +7,7 @@ import { STYLES as CITE } from './cite.js';
 import { figImg, pdfUrl, figCandidates } from './figures.js';
 import { videoPlayer, paperSlides } from './vplayer.js';
 import { idb } from './idb.js';
+import { buildPrompt, coverDataUrl, aiReady, generateAI, aiImages, removeAI, coverChoice } from './imagegen.js';
 import * as Audio from './audio.js';
 import * as Pod from './podcast.js';
 import * as Vid from './video.js';
@@ -85,9 +86,71 @@ const waitFull = (box, ctx) => {
   return true;
 };
 
+// ---------- Visuals: AI illustrations + Evidara design cover + official figures ----------
+function visualsCard(ctx) {
+  const { a } = ctx; const key = keyOf(a);
+  const stage = h('div', { class: 'vis-stage' });
+  const thumbs = h('div', { class: 'vis-thumbs' });
+  const label = h('div', { class: 'vis-label' });
+  const how = h('details', { class: 'vis-how' });
+  const genBtn = h('button', { class: 'btn', type: 'button' }, icon('studio', 16), ' Generate AI illustration');
+  const left = h('span', { class: 'meta' });
+  let items = [], cur = 0, variant = 0;
+  const figs = () => (ctx.full?.figures || []).filter(f => f.href);
+  async function collect() {
+    const ai = await aiImages(key);
+    const design = coverDataUrl(a, { w: 1280, h: 720 });
+    items = [
+      ...ai.map((x, i) => ({ kind: 'ai', src: x.src, idx: i, prompt: x.prompt, model: x.model })),
+      { kind: 'design', src: design },
+      ...figs().map(f => ({ kind: 'figure', fig: f })),
+    ];
+  }
+  function show(i) {
+    cur = Math.max(0, Math.min(items.length - 1, i));
+    const it = items[cur];
+    const media = it.kind === 'figure' ? figImg(a.pmcid, it.fig, 'vis-img') : h('img', { class: 'vis-img' + (it.kind === 'figure' ? '' : ' kb'), src: it.src, alt: it.kind === 'ai' ? 'AI illustration of the study topic' : 'Evidara design cover' });
+    stage.replaceChildren(media,
+      h('button', { class: 'vis-nav prev', type: 'button', 'aria-label': 'Previous image', onclick: () => show(cur - 1) }, '‹'),
+      h('button', { class: 'vis-nav next', type: 'button', 'aria-label': 'Next image', onclick: () => show(cur + 1) }, '›'));
+    label.replaceChildren(
+      it.kind === 'ai' ? h('span', { class: 'chip warn' }, `AI illustration · not from the paper · ${it.model}`) : it.kind === 'design' ? h('span', { class: 'chip' }, 'Design cover · made by Evidara from the title and study type') : h('span', { class: 'chip ok' }, `${it.fig.label || 'Figure'} · from the paper`),
+      it.kind === 'figure' ? h('span', { class: 'meta vis-cap' }, (it.fig.caption || '').slice(0, 260)) : null,
+      h('span', { class: 'row' },
+        it.kind !== 'figure' ? h('a', { class: 'btn small ghost', href: it.src, download: `evidara-${it.kind}-${(a.authors[0]?.last || 'paper').replace(/\W/g, '')}${a.year}.jpg` }, 'Download') : null,
+        it.kind !== 'figure' ? h('button', { class: 'btn small ghost', type: 'button', onclick: () => { coverChoice.set(key, it.kind === 'ai' ? { ai: it.idx } : 'design'); toast('Set as this paper\'s cover in feeds and reels'); } }, 'Use as cover') : null,
+        it.kind === 'ai' ? h('button', { class: 'btn small ghost', type: 'button', onclick: async () => { await removeAI(key, it.idx); await collect(); drawThumbs(); show(0); } }, 'Remove') : null));
+    thumbs.querySelectorAll('button').forEach((b, j) => b.classList.toggle('on', j === cur));
+  }
+  function drawThumbs() {
+    thumbs.replaceChildren(...items.map((it, j) => h('button', { type: 'button', class: 'vis-thumb ' + it.kind, 'aria-label': `Image ${j + 1}`, onclick: () => show(j) },
+      it.kind === 'figure' ? figImg(a.pmcid, it.fig) : h('img', { src: it.src, alt: '' }), h('span', {}, it.kind === 'ai' ? 'AI' : it.kind === 'design' ? 'Cover' : (it.fig.label || 'Fig')))));
+  }
+  const drawHow = () => {
+    const p = buildPrompt(a, ctx.full, variant);
+    how.replaceChildren(h('summary', {}, 'How the AI illustration is made'),
+      h('p', { class: 'meta' }, `Style for a ${p.style.design.toLowerCase()}: ${p.style.name}. Topic from the title${p.concepts.length ? `; concepts from the record: ${p.concepts.join(', ')}` : ''}.`),
+      h('pre', { class: 'mono vis-prompt' }, p.prompt));
+  };
+  genBtn.addEventListener('click', async () => {
+    if (!aiReady()) { toast('AI images switch on once the Evidara AI service is connected. The design cover and official figures are ready now.'); return; }
+    genBtn.disabled = true; const old = genBtn.lastChild.textContent; genBtn.lastChild.textContent = ' Generating…';
+    try { const p = buildPrompt(a, ctx.full, variant++); const it = await generateAI(key, p.prompt); left.textContent = it.left != null ? `${it.left} left today` : ''; await collect(); drawThumbs(); show(0); drawHow(); }
+    catch (e) { toast(e.message); }
+    genBtn.disabled = false; genBtn.lastChild.textContent = old;
+  });
+  const box = h('div', { class: 'card visuals' },
+    h('div', { class: 'rhead' }, h('h3', {}, 'Visuals'), h('div', { class: 'row' }, genBtn, left)),
+    aiReady() ? null : h('p', { class: 'note' }, 'AI illustrations are not connected yet. The Evidara design cover and the paper\'s own figures are shown.'),
+    stage, label, thumbs, how);
+  (async () => { await collect(); drawThumbs(); show(0); drawHow(); })();
+  return box;
+}
+
 // ---------- Overview ----------
 function overview(box, ctx) {
   const { a } = ctx;
+  box.append(visualsCard(ctx));
   box.append(h('div', { class: 'card' }, h('h3', {}, 'Abstract'),
     ctx.abs.length ? h('div', { class: 'abstract' }, ...ctx.abs.map(s => [h('h4', {}, s.title), h('p', {}, s.text)])) : h('p', { class: 'meta' }, ctx.full || ctx.fullErr ? 'No abstract in this record.' : 'Loading abstract from full text…')));
   box.append(podcastCard(ctx));
@@ -154,6 +217,8 @@ function videoCard(ctx) {
   const lim = secs.flatMap(s => splitSentences(s.text)).find(t => /\blimitation/i.test(t));
   const fig = ctx.full?.figures?.find(f => f.href);
   const slides = paperSlides(a, { finding: res[0], limitation: lim, fig, figUrls: fig ? figCandidates(a.pmcid, fig.href) : null, design: studyDesign(a) });
+  slides[0].img = [coverDataUrl(a, { w: 1280, h: 720, withText: false })];
+  aiImages(keyOf(a)).then(ai => { if (ai[0]) slides[0].img = [ai[0].src]; });
   const player = videoPlayer({ title: a.title, slides, aspect: '16:9', downloadName: `evidara-${(a.authors[0]?.last || 'paper').replace(/\W/g, '')}${a.year}.webm` });
   return h('div', { class: 'card' }, h('div', { class: 'rhead' }, h('h3', {}, 'Video'), h('a', { href: `#reels/${encodeURIComponent(keyOf(a))}` }, 'Open as reel ›')),
     player, h('p', { class: 'meta' }, 'Animated from the paper itself. Narration uses your device\'s voice. Keys: space play, ←/→ slides, C captions, M narration, F fullscreen.'));
