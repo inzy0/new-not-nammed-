@@ -1,4 +1,4 @@
-// Member IDs: <DOMAIN>-<5 random chars><1 check char>, e.g. CARD-7K3QX4.
+// Member IDs: <DOMAIN>-<5 random chars><1 check char>, e.g. CARD-7K3QX7.
 // Crockford base32 (no I, L, O, U) so IDs read aloud and type without confusion.
 // The check char catches one-character typos and swapped neighbours.
 // Final uniqueness is enforced by the server when accounts go live; in the browser it is a preview.
@@ -73,9 +73,20 @@ export function newId(code) {
 export function parseId(raw) {
   const s = String(raw || '').toUpperCase().replace(/\s+/g, '').replace(/[IL]/g, '1').replace(/O/g, '0');
   const m = s.match(/^([A-Z]{4})-([0-9A-HJKMNP-TV-Z]{5})([0-9A-HJKMNP-TV-Z])$/);
-  if (!m) return { ok: false, reason: 'Format is DOMAIN-XXXXXC, e.g. CARD-7K3QX4' };
+  if (!m) return { ok: false, reason: 'Format is DOMAIN-XXXXXC, e.g. CARD-7K3QX7' };
   const d = domainByCode(m[1]);
   if (!d) return { ok: false, reason: `Unknown domain code ${m[1]}` };
   if (checkChar(m[2]) !== m[3]) return { ok: false, reason: 'Check character does not match: probably a typo' };
   return { ok: true, id: `${m[1]}-${m[2]}${m[3]}`, code: m[1], domain: d[1] };
+}
+
+// ORCID iD check digit (ISO 7064 MOD 11-2), as specified by ORCID.
+export function validOrcid(raw) {
+  const s = String(raw || '').trim().replace(/^https?:\/\/orcid\.org\//i, '');
+  if (!/^\d{4}-\d{4}-\d{4}-\d{3}[\dX]$/.test(s)) return false;
+  const d = s.replace(/-/g, '');
+  let total = 0;
+  for (let i = 0; i < 15; i++) total = (total + Number(d[i])) * 2;
+  const r = (12 - (total % 11)) % 11;
+  return d[15] === (r === 10 ? 'X' : String(r));
 }

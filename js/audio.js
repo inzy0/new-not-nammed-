@@ -5,11 +5,14 @@ import { splitSentences } from './util.js';
 import { checks, studyDesign, reuse } from './verify.js';
 
 export const FORMATS = {
-  deep: { name: 'Deep Dive', desc: 'Two hosts walk through background, methods, results and conclusions in the paper\'s own words.' },
-  brief: { name: 'The Brief', desc: 'One voice, about a minute: design, aim, key result and conclusion.' },
-  critique: { name: 'The Critique', desc: 'The verification card read aloud, then the authors\' own stated limitations.' },
-  debate: { name: 'The Debate', desc: 'Host A reads the findings; Host B reads the limitations and flags. No winner is declared.' },
+  short: { name: 'Short', desc: 'About a minute: design, aim, the key result and the conclusion.' },
+  briefing: { name: 'Briefing', desc: 'A structured clinical briefing: design, verification flags, aim, key results, conclusion, and one stated limitation.' },
+  long: { name: 'Long', desc: 'Two hosts walk through background, methods, results, discussion, conclusion, limitations and declarations.' },
+  custom: { name: 'Customised', desc: 'Pick the sections, depth and order you want.' },
 };
+const ALIAS = { brief: 'short', deep: 'long', critique: 'briefing', debate: 'long' };
+export const fmtId = f => FORMATS[f] ? f : (ALIAS[f] || 'short');
+export const CUSTOM_PARTS = [['background', 'Background'], ['methods', 'Methods'], ['results', 'Results'], ['discussion', 'Discussion'], ['conclusion', 'Conclusion'], ['limitations', 'Limitations'], ['checks', 'Verification card'], ['declarations', 'Funding & conflicts']];
 
 export const STYLES = {
   clinical: { name: 'Calm clinical', rate: 0.98, pitchA: 1.0, pitchB: 0.92 },
@@ -42,8 +45,8 @@ function bucket(sections) {
 
 const dedupe = arr => { const seen = new Set(); return arr.filter(x => !seen.has(x.t) && seen.add(x.t)); };
 
-export function buildScript(a, { format, length, abstract, full }) {
-  const n = LENGTHS[length]?.n || 4;
+export function buildScript(a, { format, length, abstract, full, parts }) {
+  format = fmtId(format);
   const useFull = full && reuse(a).derivatives && full.sections.length;
   const sections = useFull ? [...(full.abstract.length ? full.abstract : abstract), ...full.sections] : abstract;
   const b = bucket(sections);
@@ -52,50 +55,66 @@ export function buildScript(a, { format, length, abstract, full }) {
   const take = (arr, k) => dedupe(arr).slice(0, k);
   const first = a.authors[0]?.last || a.authorString.split(',')[0] || 'the authors';
   const lic = reuse(a).label;
+  const flags = () => checks(a, full).filter(c => c.state === 'warn' || c.state === 'bad');
+  say('A', `${a.title}. By ${first}${a.authors.length > 1 ? ' and colleagues' : ''}, ${a.journal}, ${a.year}.`, 'Record');
 
-  say('A', `This is an Evidara audio reading. Everything you will hear, apart from these short signposts, is read word for word from the article.`);
-  say('A', `${a.title}. By ${first}${a.authors.length > 1 ? ' and colleagues' : ''}, ${a.journal}, ${a.year}. Licence: ${lic}.`, 'Record');
-
-  if (format === 'brief') {
+  if (format === 'short') {
     say('A', `Study design: ${studyDesign(a)}.`, 'Publication type');
     for (const x of take(b.background, 1)) say('A', x.t, x.src);
-    for (const x of take(b.results, Math.max(1, n - 1))) say('A', x.t, x.src);
+    for (const x of take(b.results, 2)) say('A', x.t, x.src);
     for (const x of take(b.conclusion.length ? b.conclusion : b.discussion, 1)) say('A', x.t, x.src);
-  } else if (format === 'deep') {
-    const parts = [
-      ['background', 'Let\'s start with why this study was done.'],
-      ['methods', 'How did they do it?'],
-      ['results', 'What did they find?'],
-      ['discussion', 'How do the authors interpret it?'],
-      ['conclusion', 'And their conclusion.'],
-    ];
-    for (const [k, cue] of parts) {
-      const got = take(b[k], n);
+  } else if (format === 'briefing') {
+    say('A', `Briefing. Design: ${studyDesign(a)}. Licence: ${lic}.`, 'Record');
+    const f = flags();
+    say('B', f.length ? `Verification flags: ${f.map(c => c.label).join('; ')}.` : 'Verification: no flags in the record.', 'Verification card');
+    say('A', 'Aim.'); for (const x of take(b.background, 1)) say('B', x.t, x.src);
+    say('A', 'Key results.'); for (const x of take(b.results, 3)) say('B', x.t, x.src);
+    say('A', 'Conclusion.'); for (const x of take(b.conclusion.length ? b.conclusion : b.discussion, 1)) say('B', x.t, x.src);
+    if (b.limitations.length) { say('A', 'One limitation the authors state.'); say('B', b.limitations[0].t, b.limitations[0].src); }
+  } else {
+    const n = format === 'long' ? 8 : (LENGTHS[length]?.n || 4);
+    const want = format === 'long' ? CUSTOM_PARTS.map(p => p[0]) : (parts && parts.length ? parts : ['background', 'results', 'conclusion']);
+    const cues = { background: 'Why was this study done?', methods: 'How did they do it?', results: 'What did they find?', discussion: 'How do the authors interpret it?', conclusion: 'Their conclusion.', limitations: 'What limitations do the authors state?' };
+    for (const k of want) {
+      if (k === 'checks') { say('A', 'The verification card.'); for (const c of checks(a, full)) say('B', `${c.label}. ${c.detail}.`, `Check: ${c.source}`); continue; }
+      if (k === 'declarations') {
+        if (full?.funding || full?.coi) { say('A', 'Funding and conflicts, as declared.'); if (full.funding) say('B', splitSentences(full.funding).slice(0, 2).join(' '), 'Funding'); if (full.coi) say('B', splitSentences(full.coi).slice(0, 2).join(' '), 'Conflicts of interest'); }
+        continue;
+      }
+      const got = take(b[k] || [], k === 'limitations' ? Math.max(2, n / 2) : n);
       if (!got.length) continue;
-      say('A', cue);
-      for (const x of got) say('B', x.t, x.src);
-    }
-    if (b.limitations.length) { say('A', 'What limitations do the authors themselves state?'); for (const x of take(b.limitations, Math.max(2, n / 2))) say('B', x.t, x.src); }
-  } else if (format === 'critique') {
-    say('A', 'First, the verification card.');
-    for (const c of checks(a, full)) say('B', `${c.label}. ${c.detail}.`, `Check: ${c.source}`);
-    if (b.limitations.length) { say('A', 'Now the limitations, as the authors state them.'); for (const x of take(b.limitations, n)) say('B', x.t, x.src); }
-    else say('A', 'The text available to us contains no explicit limitations statement. That absence is itself worth noting.');
-  } else if (format === 'debate') {
-    say('A', 'I will read what the study found.');
-    say('B', 'And I will read what should make us cautious. We will not declare a winner: you decide.');
-    const pro = take([...b.results, ...b.conclusion], n);
-    const con = take(b.limitations, n);
-    const flags = checks(a, full).filter(c => c.state === 'warn' || c.state === 'bad');
-    const len = Math.max(pro.length, con.length + flags.length);
-    for (let i = 0; i < len; i++) {
-      if (pro[i]) say('A', pro[i].t, pro[i].src);
-      if (con[i]) say('B', con[i].t, con[i].src);
-      else if (flags[i - con.length]) { const f = flags[i - con.length]; say('B', `Flag: ${f.label}. ${f.detail}.`, `Check: ${f.source}`); }
+      say('A', cues[k]); for (const x of got) say('B', x.t, x.src);
     }
   }
-  say('A', `Source: ${a.doi ? 'doi ' + a.doi : a.pmcid || a.pmid}. Read the full article before applying anything in practice.`, 'Record');
+  say('A', `Source: ${a.doi ? 'doi ' + a.doi : a.pmcid || a.pmid}. Read the full paper before applying anything in practice.`, 'Record');
   return { lines: L, basis: useFull ? 'full text' : 'abstract' };
+}
+
+// Same engine for any document (Studio notebook): sections = [{title, text}], meta = {title, by, source}.
+// Structured documents (real headings like Methods/Results) use the section logic; anything else gets a
+// plain read-through in parts, so no sentence is ever labelled with a section it does not come from.
+export function buildDocScript(meta, sections, format = 'short', parts) {
+  format = fmtId(format);
+  const structured = sections.filter(s => PICK.some(([, re]) => re.test(s.title))).length >= 2;
+  if (structured) {
+    const fake = { title: meta.title, authors: [], authorString: meta.by || 'the authors', journal: meta.source || 'an uploaded document', year: '', license: 'cc by',
+      pubTypes: [], corrections: [], source: 'DOC', citedBy: 0, abstractHtml: '', doi: null, pmcid: meta.title, pmid: null };
+    const s = buildScript(fake, { format: format === 'briefing' ? 'custom' : format, length: format === 'long' ? 'long' : 'normal', abstract: sections, full: null,
+      parts: format === 'briefing' ? ['background', 'results', 'conclusion', 'limitations'] : parts });
+    s.lines = s.lines.filter(l => !/^Source: |^Study design|Verification|Licence/.test(l.t));
+    return { ...s, basis: 'document' };
+  }
+  const all = sections.flatMap(sec => splitSentences(sec.text).map(t => ({ t, src: sec.title })));
+  const plan = { short: [3, 1], briefing: [4, 2], long: [8, 4], custom: [5, 3] }[format];
+  const L = [{ who: 'A', t: `${meta.title}.`, src: 'Document' }];
+  const k = Math.min(plan[0], Math.max(1, all.length));
+  for (let i = 0; i < k; i++) {
+    const chunk = all.slice(Math.floor(i * all.length / k), Math.floor((i + 1) * all.length / k));
+    if (!chunk.length) continue;
+    L.push({ who: 'A', t: `Part ${i + 1} of ${k}.`, src: null });
+    chunk.slice(0, plan[1]).forEach(x => L.push({ who: 'B', t: x.t, src: x.src }));
+  }
+  return { lines: L, basis: 'document' };
 }
 
 // ---------- playback with the browser's own voices (free, on-device, unlimited) ----------

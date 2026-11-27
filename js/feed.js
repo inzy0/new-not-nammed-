@@ -2,7 +2,7 @@
 import { h, store, toast, copyText, splitSentences } from './util.js';
 import { icon } from './icons.js';
 import { DOMAINS, domainByCode } from './ids.js';
-import { searchArticles, getFullText, abstractSections, keyOf, openAccessTotal } from './api.js';
+import { searchArticles, getArticle, getFullText, abstractSections, keyOf, openAccessTotal } from './api.js';
 import { checks, score, studyDesign, reuse } from './verify.js';
 import { STYLES as CITE } from './cite.js';
 import { figImg } from './figures.js';
@@ -54,8 +54,8 @@ const io = 'IntersectionObserver' in window ? new IntersectionObserver(entries =
   for (const e of entries) if (e.isIntersecting) { io.unobserve(e.target); const fn = e.target._load; if (fn) { lazyQ.push(fn); pumpLazy(); } }
 }, { rootMargin: '600px 0px' }) : null;
 
-function mediaFor(a) {
-  const box = h('div', { class: 'media' }, h('div', { class: 'media-ph' }, bloomSVG(), h('span', {}, studyDesign(a))));
+function mediaFor(a, tall = false) {
+  const box = h('div', { class: 'media' + (tall ? ' tall' : '') }, h('div', { class: 'media-ph' }, bloomSVG(), h('span', {}, studyDesign(a))));
   if (!a.pmcid || !a.hasFullText) return box;
   box._load = async () => {
     try {
@@ -96,68 +96,116 @@ export function paperCard(a) {
 
 // ---------- Explore ----------
 const DESIGN_Q = { any: '', rct: ' AND PUB_TYPE:"Randomized Controlled Trial"', sr: ' AND (PUB_TYPE:"Systematic Review" OR PUB_TYPE:"Meta-Analysis")', review: ' AND PUB_TYPE:"Review"', case: ' AND PUB_TYPE:"Case Reports"', guide: ' AND PUB_TYPE:"Practice Guideline"' };
+const HIGH = '(PUB_TYPE:"Randomized Controlled Trial" OR PUB_TYPE:"Systematic Review" OR PUB_TYPE:"Meta-Analysis" OR PUB_TYPE:"Practice Guideline")';
+const isoAgo = n => new Date(Date.now() - n * 864e5).toISOString().slice(0, 10);
+
+// Each feed states exactly how it is built (shown under the tabs). No hidden ranking.
+export const FEEDS = [
+  { id: 'foryou', name: 'For you', how: 'Your domains, newest first' },
+  { id: 'all', name: 'All fields', how: 'Every field of health research, newest first' },
+  { id: 'trending', name: 'Trending', how: 'Your domains, most cited in the last 90 days' },
+  { id: 'mustread', name: 'Must-read', how: 'Guidelines, systematic reviews, meta-analyses and randomised trials in your domains from the last year, most cited first' },
+  { id: 'gems', name: 'Underrated gems', how: 'High-evidence designs (trials, reviews, guidelines) from 1–3 years ago with 3 citations or fewer' },
+  { id: 'preprints', name: 'Preprints', how: 'Not yet peer reviewed: newest preprints in your domains' },
+  { id: 'india', name: 'India focus', how: 'Papers with an Indian affiliation in your domains, newest first' },
+  { id: 'liked', name: 'Liked', how: 'Papers you liked on this device (community-wide likes arrive with sign-in)' },
+  { id: 'community', name: 'Community', how: 'Posts published on Evidara after admin verification' },
+];
+
+function feedQuery(st, domains) {
+  const doms = domains.map(c => domainByCode(c)).filter(Boolean);
+  let base = doms.length ? doms.map(d => `(${d[2]})`).join(' OR ') : 'medicine OR health OR clinical OR disease OR patients';
+  if (st.q) base = `(${base}) AND (${st.q})`;
+  const f = st.tab;
+  if (f === 'all') return { query: st.q || 'medicine OR health OR clinical OR disease OR patients OR nursing OR "public health"', days: st.days, sort: 'date' };
+  if (f === 'trending') return { query: base, days: Math.max(st.days || 90, 90), sort: 'cited' };
+  if (f === 'mustread') return { query: base, raw: ` AND ${HIGH}`, days: 365, sort: 'cited' };
+  if (f === 'gems') return { query: base, raw: ` AND ${HIGH} AND CITED:[0 TO 3] AND FIRST_PDATE:[${isoAgo(1095)} TO ${isoAgo(365)}]`, days: 0, sort: 'date' };
+  if (f === 'preprints') return { query: base, raw: ' AND SRC:PPR', days: st.days || 30, sort: 'date', openOnly: false };
+  if (f === 'india') return { query: base, raw: ' AND AFF:"India"', days: st.days || 90, sort: 'date' };
+  return { query: base, days: st.days, sort: 'date' };
+}
 
 export async function explore() {
   const pr = profile();
-  const st = store.get('explore', { tab: 'foryou', design: 'any', preprints: true, days: 30, feeds: [pr.domain] });
+  const st = store.get('explore', {});
+  Object.assign(st, { tab: st.tab || 'foryou', design: st.design || 'any', preprints: st.preprints ?? true, days: st.days ?? 30, feeds: st.feeds?.length ? st.feeds : [pr.domain] });
+  if (!FEEDS.some(f => f.id === st.tab)) st.tab = 'foryou';
   const save = () => store.set('explore', st);
   const center = h('div', { class: 'center' }), rail = h('aside', { class: 'rail' });
   view.replaceChildren(h('div', { class: 'cols' }, center, rail));
 
-  // search
   const q = h('input', { type: 'search', class: 'bigsearch', placeholder: 'Search millions of open-access papers, e.g. "sepsis biomarkers in children"', 'aria-label': 'Search papers', value: st.q || '' });
-  q.addEventListener('keydown', e => { if (e.key === 'Enter') { st.q = q.value.trim(); save(); load(true); } });
-  const searchRow = h('div', { class: 'searchrow' }, q, h('button', { class: 'searchbtn', type: 'button', 'aria-label': 'Search', onclick: () => { st.q = q.value.trim(); save(); load(true); } }, icon('search', 20)));
+  const doSearch = () => { st.q = q.value.trim(); save(); load(true); };
+  q.addEventListener('keydown', e => { if (e.key === 'Enter') doSearch(); });
+  const searchRow = h('div', { class: 'searchrow' }, q, h('button', { class: 'searchbtn', type: 'button', 'aria-label': 'Search', onclick: doSearch }, icon('search', 20)));
 
-  // tabs + filter
-  const tabDefs = [['foryou', 'For you'], ['trending', 'Trending'], ['latest', 'Latest (all)']];
-  const tabs = h('div', { class: 'seg' }, ...tabDefs.map(([k, l]) => h('button', { type: 'button', class: k === st.tab ? 'on' : '', onclick: e => { st.tab = k; save(); tabs.querySelectorAll('button').forEach(b => b.classList.toggle('on', b === e.currentTarget)); load(true); } }, l)));
+  const stories = h('div', { class: 'stories', role: 'list', 'aria-label': 'Domains' });
+  const tabs = h('div', { class: 'seg feeds', role: 'tablist' });
+  const how = h('div', { class: 'how' });
+  const drawStories = () => stories.replaceChildren(
+    h('a', { class: 'story reelstory', href: '#reels', role: 'listitem' }, h('span', { class: 'ring2' }, icon('reels', 26)), h('span', { class: 'st-l' }, 'Reels')),
+    ...[...new Set([...st.feeds, ...DOMAINS.map(d => d[0])])].slice(0, 18).map(c => {
+      const d = domainByCode(c); const on = st.tab === 'foryou' && st.feeds.length === 1 && st.feeds[0] === c;
+      return h('button', { class: 'story' + (on ? ' on' : ''), type: 'button', role: 'listitem', title: d[1], onclick: () => { st.feeds = [c]; st.tab = 'foryou'; save(); drawTabs(); drawStories(); load(true); paperOfTheDay(potd, st.feeds); } },
+        h('span', { class: 'ring2' }, h('b', {}, c)), h('span', { class: 'st-l' }, d[1].split(/[ &/]/)[0]));
+    }));
+  const drawTabs = () => {
+    tabs.replaceChildren(...FEEDS.map(f => h('button', { type: 'button', role: 'tab', class: f.id === st.tab ? 'on' : '', onclick: () => { st.tab = f.id; save(); drawTabs(); drawStories(); load(true); } }, f.name)));
+    how.textContent = FEEDS.find(f => f.id === st.tab).how + (st.design !== 'any' && !['mustread', 'gems', 'liked', 'community'].includes(st.tab) ? ' · design filter on' : '');
+  };
   const filt = h('div', { class: 'filterbox', hidden: true });
   const design = h('select', { 'aria-label': 'Study design' }, ...[['any', 'Any design'], ['rct', 'Randomised trials'], ['sr', 'Systematic reviews / meta-analyses'], ['review', 'Reviews'], ['case', 'Case reports'], ['guide', 'Guidelines']].map(([v, l]) => h('option', { value: v, selected: v === st.design }, l)));
   const days = h('select', { 'aria-label': 'Time window' }, ...[[7, 'Last 7 days'], [30, 'Last 30 days'], [90, 'Last 90 days'], [365, 'Last year'], [0, 'Any time']].map(([v, l]) => h('option', { value: v, selected: v === st.days }, l)));
   const pp = h('input', { type: 'checkbox', checked: st.preprints, 'aria-label': 'Include preprints' });
   const feedsBox = h('div', { class: 'chips' });
   const drawFeeds = () => feedsBox.replaceChildren(...DOMAINS.map(([c, l]) => h('button', { type: 'button', class: 'chip pick' + (st.feeds.includes(c) ? ' on' : ''), onclick: () => {
-    st.feeds = st.feeds.includes(c) ? st.feeds.filter(x => x !== c) : [...st.feeds, c]; if (!st.feeds.length) st.feeds = [pr.domain]; save(); drawFeeds(); } }, l)));
-  drawFeeds();
+    st.feeds = st.feeds.includes(c) ? st.feeds.filter(x => x !== c) : [...st.feeds, c]; if (!st.feeds.length) st.feeds = [pr.domain]; save(); drawFeeds(); drawStories(); } }, l)));
   filt.append(h('div', { class: 'row' }, design, days, h('label', { class: 'row', style: 'gap:6px' }, pp, 'Include preprints'),
-    h('button', { class: 'btn small', type: 'button', onclick: () => { st.design = design.value; st.days = +days.value; st.preprints = pp.checked; save(); filt.hidden = true; load(true); } }, 'Apply')),
-    h('div', { class: 'meta', style: 'margin:12px 0 6px' }, 'Your feeds ("For you" and "Trending" combine these domains):'), feedsBox);
+    h('button', { class: 'btn small', type: 'button', onclick: () => { st.design = design.value; st.days = +days.value; st.preprints = pp.checked; save(); filt.hidden = true; drawTabs(); load(true); } }, 'Apply')),
+    h('div', { class: 'meta', style: 'margin:12px 0 6px' }, 'Your domains (used by For you, Trending, Must-read, Underrated gems, Preprints and India focus):'), feedsBox);
   const toolbar = h('div', { class: 'toolbar' },
-    h('button', { class: 'iconbtn', type: 'button', 'aria-label': 'Filters and feeds', title: 'Filters and feeds', onclick: () => (filt.hidden = !filt.hidden) }, icon('filter', 18)),
-    tabs, h('button', { class: 'btn small ghost', type: 'button', onclick: () => (filt.hidden = !filt.hidden) }, '+ Feeds'));
+    h('button', { class: 'iconbtn', type: 'button', 'aria-label': 'Filters and domains', title: 'Filters and domains', onclick: () => (filt.hidden = !filt.hidden) }, icon('filter', 18)),
+    tabs);
 
   const status = h('div', { class: 'meta', style: 'margin:6px 2px 10px' });
   const newPill = h('button', { class: 'newpill', type: 'button', hidden: true, onclick: () => { newPill.hidden = true; load(true); window.scrollTo({ top: 0, behavior: 'smooth' }); } });
   const list = h('div', { class: 'plist' });
-  const sentinel = h('div', { class: 'sentinel' });
+  const sentinel = h('div', { class: 'sentinel' }, h('span', { class: 'spinner' }));
   const hero = compactHero();
-  center.append(searchRow, toolbar, filt, newPill, hero.el, status, list, sentinel);
+  const potd = h('div', {});
+  drawStories(); drawTabs(); drawFeeds();
+  center.append(searchRow, stories, toolbar, how, filt, newPill, hero.el, potd, status, list, sentinel);
+  paperOfTheDay(potd, st.feeds);
 
-  let cursor = '*', busy = false, done = false, topId = null, gen = 0;
-  const buildQuery = () => {
-    const doms = st.tab === 'latest' ? [] : st.feeds.map(c => domainByCode(c)).filter(Boolean);
-    let base = doms.length ? doms.map(d => `(${d[2]})`).join(' OR ') : '';
-    if (st.q) base = base ? `(${base}) AND (${st.q})` : st.q;
-    if (!base) base = 'medicine OR health OR clinical OR disease OR patients';
-    return base;
+  let cursor = '*', busy = false, done = false, topId = null, gen = 0, count = 0, reelBuf = [];
+  const addReelStrip = () => {
+    const items = reelBuf.splice(0, 8);
+    if (items.length < 3) { reelBuf.unshift(...items); return; }
+    list.append(h('section', { class: 'reelstrip' }, h('div', { class: 'rhead' }, h('b', {}, 'Reels from your feed'), h('a', { href: '#reels' }, 'Watch all ›')),
+      h('div', { class: 'hscroll reels-h' }, ...items.map(a => h('a', { class: 'minireel', href: `#reels/${encodeURIComponent(keyOf(a))}` }, mediaFor(a, true), h('span', { class: 'mr-t' }, a.title))))));
   };
   async function load(reset) {
     if (busy && !reset) return;
     const my = ++gen;
-    if (reset) { cursor = '*'; done = false; list.replaceChildren(...[1, 2, 3].map(() => h('div', { class: 'pcard skeleton' }))); }
-    busy = true;
+    if (reset) { cursor = '*'; done = false; count = 0; reelBuf = []; list.replaceChildren(...[1, 2, 3].map(() => h('div', { class: 'pcard skeleton' }))); }
+    busy = true; sentinel.hidden = false;
     try {
-      const sort = st.tab === 'trending' ? 'cited' : 'date';
-      const daysWin = st.tab === 'trending' ? Math.max(st.days || 90, 90) : st.days;
-      let query = buildQuery() + (DESIGN_Q[st.design] || '');
-      if (!st.preprints) query += ' NOT SRC:PPR';
-      const r = await searchArticles({ query, days: daysWin, cursor, sort, pageSize: 12 });
+      if (st.tab === 'liked' || st.tab === 'community') { await loadLocal(st.tab, my); return; }
+      const fq = feedQuery(st, st.feeds);
+      let raw = fq.raw || '';
+      if (!['mustread', 'gems'].includes(st.tab)) raw += DESIGN_Q[st.design] || '';
+      if (!st.preprints && st.tab !== 'preprints') raw += ' NOT SRC:PPR';
+      const r = await searchArticles({ query: fq.query, raw, days: fq.days, cursor, sort: fq.sort, pageSize: 12, openOnly: fq.openOnly !== false });
       if (my !== gen) return;
       if (reset) { list.replaceChildren(); topId = r.results[0]?.id || null; hero.set(r.results.slice(0, 6)); }
-      status.textContent = `${r.hitCount.toLocaleString()} open-access papers in this feed · ${st.tab === 'trending' ? 'most cited in the last ' + daysWin + ' days' : 'newest first'} · no hidden ranking`;
-      r.results.forEach(a => list.append(paperCard(a)));
-      if (!r.results.length && reset) list.append(h('div', { class: 'empty' }, 'Nothing here yet. Widen the time window or add feeds.'));
+      status.textContent = `${r.hitCount.toLocaleString()} papers in this feed`;
+      for (const a of r.results) {
+        list.append(paperCard(a)); count++;
+        if (reuse(a).derivatives) reelBuf.push(a);
+        if (count % 6 === 0) addReelStrip();
+      }
+      if (!r.results.length && reset) list.append(h('div', { class: 'empty' }, 'Nothing here yet. Widen the time window or add domains.'));
       done = !r.next || r.next === cursor || r.results.length < 12;
       cursor = r.next;
     } catch (e) {
@@ -165,25 +213,75 @@ export async function explore() {
       const retry = h('button', { class: 'btn small', type: 'button', onclick: () => { err.remove(); load(reset); } }, 'Retry');
       const err = h('div', { class: 'empty' }, `Could not load papers: ${e.message}. `, retry);
       if (reset) list.replaceChildren(err); else list.append(err);
-    } finally { if (my === gen) busy = false; }
+    } finally { if (my === gen) { busy = false; sentinel.hidden = done; } }
+  }
+  async function loadLocal(kind, my) {
+    done = true;
+    if (kind === 'liked') {
+      const keys = Object.keys(store.get('likes', {}));
+      list.replaceChildren(...(keys.length ? [] : [h('div', { class: 'empty' }, 'Papers you like appear here. Tap ♥ on any paper.')]));
+      status.textContent = `${keys.length} liked on this device`;
+      for (const k of keys.slice(0, 40)) { try { const a = await getArticle(k); if (my !== gen) return; if (a) list.append(paperCard(a)); } catch { /* skip */ } }
+    } else {
+      const posts = await loadPosts();
+      if (my !== gen) return;
+      status.textContent = `${posts.length} verified community post${posts.length === 1 ? '' : 's'}`;
+      list.replaceChildren(...(posts.length ? posts.map(postCard) : [h('div', { class: 'empty' }, 'No published community posts yet. Write one in Publish; it appears here after admin verification.')]));
+    }
   }
   if ('IntersectionObserver' in window) {
-    const so = new IntersectionObserver(es => { if (es[0].isIntersecting && !busy && !done && list.children.length) load(false); }, { rootMargin: '1200px 0px' });
+    const so = new IntersectionObserver(es => { if (es[0].isIntersecting && !busy && !done && list.children.length) load(false); }, { rootMargin: '1400px 0px' });
     so.observe(sentinel);
   }
-  // live: check for newer papers every 3 minutes while this page is open
   const poll = setInterval(async () => {
-    if (!document.body.contains(list) || st.tab === 'trending') { if (!document.body.contains(list)) clearInterval(poll); return; }
+    if (!document.body.contains(list)) { clearInterval(poll); return; }
+    if (!['foryou', 'all', 'preprints', 'india'].includes(st.tab)) return;
     try {
-      const r = await searchArticles({ query: buildQuery() + (DESIGN_Q[st.design] || ''), days: 3, pageSize: 5 });
+      const fq = feedQuery(st, st.feeds);
+      const r = await searchArticles({ query: fq.query, raw: fq.raw || '', days: 3, pageSize: 5, openOnly: fq.openOnly !== false });
       const idx = r.results.findIndex(x => x.id === topId);
       const fresh = idx < 0 ? r.results.length : idx;
       if (fresh > 0 && topId) { newPill.textContent = `↑ ${fresh}${fresh >= 5 ? '+' : ''} new paper${fresh > 1 ? 's' : ''}`; newPill.hidden = false; }
     } catch { /* ignore */ }
   }, 180000);
-
   buildRail(rail, list);
   load(true);
+}
+
+// Paper of the day: high-evidence open-access papers from your domains (last 30 days) whose licence allows
+// audio/video; one is picked per calendar day (the same pick all day for the same domains).
+async function paperOfTheDay(box, feeds) {
+  const day = new Date().toISOString().slice(0, 10);
+  const doms = feeds.map(c => domainByCode(c)).filter(Boolean);
+  const query = doms.map(d => `(${d[2]})`).join(' OR ') || 'medicine';
+  try {
+    const r = await searchArticles({ query, raw: ` AND ${HIGH}`, days: 30, pageSize: 25, sort: 'cited' });
+    const pool = r.results.filter(a => reuse(a).derivatives);
+    if (!pool.length) { box.replaceChildren(); return; }
+    let hsh = 0; for (const c of day + feeds.join()) hsh = (hsh * 31 + c.charCodeAt(0)) >>> 0;
+    const a = pool[hsh % Math.min(pool.length, 10)];
+    const card = paperCard(a);
+    card.classList.add('potd');
+    card.prepend(h('div', { class: 'potd-tag' }, icon('studio', 16), ` Paper of the day · ${new Date().toLocaleDateString([], { day: 'numeric', month: 'short' })}`));
+    box.replaceChildren(card);
+  } catch { box.replaceChildren(); }
+}
+
+let postsCache = null;
+export async function loadPosts() {
+  if (postsCache) return postsCache;
+  try { const r = await fetch('data/posts.json', { cache: 'no-cache' }); postsCache = r.ok ? await r.json() : []; } catch { postsCache = []; }
+  if (!Array.isArray(postsCache)) postsCache = [];
+  return postsCache;
+}
+export function postCard(p) {
+  return h('article', { class: 'pcard pubcard' },
+    h('div', { class: 'potd-tag' }, icon('check', 14), ' Verified community post'),
+    h('a', { class: 'ptitle', href: `#post/${encodeURIComponent(p.id)}` }, p.title),
+    h('div', { class: 'achips' }, ...(p.authors || []).map(x => h('span', { class: 'achip' }, h('span', { class: 'av' }, (x.name || '?').split(/\s+/).map(s => s[0]).slice(0, 2).join('').toUpperCase()), x.name, x.memberId ? h('span', { class: 'idbadge sm' }, x.memberId) : null))),
+    h('div', { class: 'pmeta' }, `${p.type || 'Article'} · ${p.publishedAt ? new Date(p.publishedAt).toLocaleDateString() : ''}`),
+    p.abstract ? h('p', { class: 'pblurb' }, p.abstract.slice(0, 320) + (p.abstract.length > 320 ? '…' : '')) : null,
+    h('div', { class: 'chips' }, ...(p.keywords || []).slice(0, 6).map(k => h('span', { class: 'chip' }, k))));
 }
 
 function compactHero() {

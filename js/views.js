@@ -1,41 +1,76 @@
 // People, researcher profile, ID lookup, Studio, Library, Profile views.
 import { h, store, toast, copyText, download, spinner } from './util.js';
 import { DOMAINS, domainByCode, newId, parseId } from './ids.js';
-import { searchResearchers, getResearcher } from './api.js';
+import { searchResearchers, getResearcher, domainResearchers } from './api.js';
 import * as P from './prompts.js';
 import * as Lib from './library.js';
 import { profile, theme, vars } from './core.js';
+import { mountNotebook } from './notebook.js';
+import { verificationCard } from './admin.js';
 
 const view = document.getElementById('view');
 
 // ---------------- PEOPLE ----------------
 export async function people() {
-  const q = h('input', { type: 'search', placeholder: 'Researcher name, e.g. "Soumya Swaminathan"', 'aria-label': 'Researcher name' });
-  const idq = h('input', { type: 'text', placeholder: 'Evidara ID, e.g. CARD-7K3QX4', 'aria-label': 'Evidara ID' });
-  const out = h('div', { class: 'grid' });
+  const pr = profile();
+  let dom = store.get('peopleDomain', pr.domain), country = store.get('peopleCountry', '');
+  const members = h('div', { class: 'grid' }), auto = h('div', { class: 'grid' }), autoHead = h('p', { class: 'sub' });
+  const q = h('input', { type: 'search', placeholder: 'Search any researcher by name', 'aria-label': 'Researcher name' });
+  const idq = h('input', { type: 'text', placeholder: 'Evidara ID, e.g. CARD-7K3QX7', 'aria-label': 'Evidara ID' });
+  const sel = h('select', { 'aria-label': 'Domain' }, ...DOMAINS.map(([c, l]) => h('option', { value: c, selected: c === dom }, `${l} (${c})`)));
+  const ctry = h('div', { class: 'seg small' });
+  const follows = () => store.get('follows', {});
+  const followBtn = (key, name) => {
+    const b = h('button', { class: 'follow' + (follows()[key] ? ' on' : ''), type: 'button', onclick: e => { e.preventDefault(); const m = follows(); m[key] ? delete m[key] : (m[key] = name); store.set('follows', m); b.classList.toggle('on', !!m[key]); b.textContent = m[key] ? 'Following' : '+ Follow'; } }, follows()[key] ? 'Following' : '+ Follow');
+    return b;
+  };
+  const card = r => h('a', { class: 'card person-card', href: `#researcher/${r.id}` },
+    h('div', { class: 'pc-top' }, h('span', { class: 'av lg' }, (r.name || '?').split(/\s+/).map(p => p[0]).slice(0, 2).join('').toUpperCase()),
+      h('div', { class: 'pc-name' }, h('b', {}, r.name), h('div', { class: 'meta' }, [r.inst, r.country].filter(Boolean).join(' · '))), followBtn('oa:' + r.id, r.name)),
+    h('div', { class: 'chips' }, h('span', { class: 'chip warn' }, 'Unclaimed'), r.orcid ? h('span', { class: 'chip ok' }, 'ORCID') : null),
+    h('div', { class: 'meta' }, `${(r.works || 0).toLocaleString()} works · ${(r.cites || 0).toLocaleString()} citations · h-index ${r.h ?? '?'}`),
+    h('div', { class: 'chips' }, ...(r.topics || []).map(t => h('span', { class: 'chip' }, t))));
+  const drawCtry = () => ctry.replaceChildren(...[['', 'Worldwide'], ['IN', 'India']].map(([v, l]) => h('button', { type: 'button', class: v === country ? 'on' : '', onclick: () => { country = v; store.set('peopleCountry', v); drawCtry(); loadAuto(); } }, l)));
+  drawCtry();
+  async function loadAuto() {
+    const d = domainByCode(dom);
+    auto.replaceChildren(...Array.from({ length: 6 }, () => h('div', { class: 'card skeleton', style: 'height:150px' })));
+    try {
+      const r = await domainResearchers(d[1], country);
+      autoHead.textContent = r.subfield ? `${r.total.toLocaleString()} researchers in OpenAlex's "${r.subfield.name}"${country ? ' in India' : ''}, most cited first. Profiles stay "unclaimed" until the person claims theirs.` : `No matching OpenAlex subfield for ${d[1]}. Use search instead.`;
+      auto.replaceChildren(...(r.list.length ? r.list.map(card) : [h('div', { class: 'empty' }, 'No researchers listed.')]));
+    } catch (e) { auto.replaceChildren(h('div', { class: 'empty' }, `Could not load researchers: ${e.message}. `, h('button', { class: 'btn small', type: 'button', onclick: loadAuto }, 'Retry'))); }
+  }
+  sel.addEventListener('change', () => { dom = sel.value; store.set('peopleDomain', dom); loadAuto(); });
   const go = async () => {
     if (!q.value.trim()) return;
-    out.replaceChildren(spinner('Searching OpenAlex'));
-    try {
-      const rs = await searchResearchers(q.value.trim());
-      out.replaceChildren(...(rs.length ? rs.map(r => h('a', { class: 'card', href: `#researcher/${r.id}`, style: 'text-decoration:none' },
-        h('div', { class: 'chips' }, h('span', { class: 'chip warn' }, 'Unclaimed · auto-built'), r.orcid ? h('span', { class: 'chip ok' }, 'ORCID') : null),
-        h('h3', {}, r.name), h('div', { class: 'meta' }, [r.inst, r.country].filter(Boolean).join(' · ')),
-        h('div', { class: 'meta' }, `${r.works} works · ${r.cites.toLocaleString()} citations · h-index ${r.h ?? '?'}`),
-        h('div', { class: 'chips' }, ...r.topics.map(t => h('span', { class: 'chip' }, t))))) : [h('div', { class: 'empty' }, 'No researchers found.')]));
-    } catch (e) { out.replaceChildren(h('div', { class: 'empty' }, `Could not search: ${e.message}`)); }
+    auto.replaceChildren(spinner('Searching OpenAlex'));
+    autoHead.textContent = `Search results for "${q.value.trim()}"`;
+    try { const rs = await searchResearchers(q.value.trim()); auto.replaceChildren(...(rs.length ? rs.map(card) : [h('div', { class: 'empty' }, 'No researchers found.')])); }
+    catch (e) { auto.replaceChildren(h('div', { class: 'empty' }, `Could not search: ${e.message}`)); }
   };
   q.addEventListener('keydown', e => e.key === 'Enter' && go());
   idq.addEventListener('keydown', e => e.key === 'Enter' && (location.hash = `#id/${encodeURIComponent(idq.value)}`));
-  view.append(h('section', { class: 'section' },
-    h('h2', {}, 'Find people'),
-    h('p', { class: 'sub' }, 'Researcher profiles are built automatically from OpenAlex and stay marked "unclaimed" until the person claims theirs. Verified members are found by their Evidara ID.'),
-    h('div', { class: 'row', style: 'margin-bottom:10px' }, q, h('button', { class: 'btn', type: 'button', onclick: go }, 'Search researchers')),
-    h('div', { class: 'row', style: 'margin-bottom:20px' }, idq, h('button', { class: 'btn ghost', type: 'button', onclick: () => (location.hash = `#id/${encodeURIComponent(idq.value)}`) }, 'Look up ID')),
-    out,
-    h('h2', { style: 'margin-top:40px;font-size:28px' }, 'Browse by domain'),
-    h('p', { class: 'sub' }, 'Every member ID starts with its domain code, so you can find people by specialty.'),
-    h('div', { class: 'chips' }, ...DOMAINS.map(([c, l]) => h('span', { class: 'chip', title: l }, `${c} · ${l}`)))));
+  view.append(h('section', { class: 'section wide' },
+    h('h2', {}, 'People'),
+    h('p', { class: 'sub' }, 'Verified Evidara members and researchers in your field, listed for you. Follow anyone; connect through paper discussions.'),
+    h('div', { class: 'row', style: 'margin-bottom:18px' }, q, h('button', { class: 'btn ghost', type: 'button', onclick: go }, 'Search'), idq, h('button', { class: 'btn ghost', type: 'button', onclick: () => (location.hash = `#id/${encodeURIComponent(idq.value)}`) }, 'Look up ID')),
+    h('h3', { class: 'h3x' }, 'Verified members'), members,
+    h('div', { class: 'rhead', style: 'margin-top:30px' }, h('h3', { class: 'h3x' }, 'Researchers in your field'), h('div', { class: 'row' }, sel, ctry)), autoHead, auto));
+  loadMembers().then(ms => members.replaceChildren(...(ms.length ? ms.map(m => h('div', { class: 'card person-card' },
+    h('div', { class: 'pc-top' }, h('span', { class: 'av lg' }, (m.name || '?').split(/\s+/).map(p => p[0]).slice(0, 2).join('').toUpperCase()),
+      h('div', { class: 'pc-name' }, h('b', {}, m.name), h('div', { class: 'meta' }, [m.role, m.institution].filter(Boolean).join(' · '))), followBtn('m:' + m.id, m.name)),
+    h('div', { class: 'chips' }, h('span', { class: 'chip ok' }, 'Verified'), h('span', { class: 'idbadge sm' }, m.id), m.orcid ? h('a', { class: 'chip', href: `https://orcid.org/${m.orcid}`, target: '_blank', rel: 'noopener noreferrer' }, 'ORCID') : null),
+    h('div', { class: 'meta' }, domainByCode(m.id.slice(0, 4))?.[1] || ''))) : [h('div', { class: 'empty' }, 'No verified members yet. Request verification from your Profile; the admin reviews it.')])));
+  loadAuto();
+}
+
+let membersCache = null;
+export async function loadMembers() {
+  if (membersCache) return membersCache;
+  try { const r = await fetch('data/members.json', { cache: 'no-cache' }); membersCache = r.ok ? await r.json() : []; } catch { membersCache = []; }
+  if (!Array.isArray(membersCache)) membersCache = [];
+  return membersCache;
 }
 
 export async function researcher([id]) {
@@ -75,12 +110,12 @@ export function idLookup([raw]) {
 // ---------------- STUDIO ----------------
 export function studio() {
   const pr = profile();
-  let tab = store.get('studioTab', 'image');
+  let tab = store.get('studioTab', 'notebook');
   const body = h('div', {});
-  const tabs = h('div', { class: 'tabs' }, ...[['image', 'Image prompts'], ['video', 'Video formats'], ['hooks', 'Hooks'], ['audio', 'Audio formats']].map(([k, l]) =>
+  const tabs = h('div', { class: 'tabs' }, ...[['notebook', 'Notebook'], ['image', 'Image prompts'], ['video', 'Video formats'], ['hooks', 'Hooks'], ['audio', 'Audio formats']].map(([k, l]) =>
     h('button', { class: 'tab' + (k === tab ? ' on' : ''), type: 'button', onclick: e => { tab = k; store.set('studioTab', k); tabs.querySelectorAll('.tab').forEach(t => t.classList.toggle('on', t === e.target)); render(); } }, l)));
   const topic = h('input', { type: 'text', placeholder: 'Topic (defaults to your domain)', 'aria-label': 'Topic', value: store.get('studioTopic', '') });
-  topic.addEventListener('input', () => { store.set('studioTopic', topic.value); render(); });
+  topic.addEventListener('input', () => { store.set('studioTopic', topic.value); if (tab !== 'notebook') render(); });
   const v = () => vars(topic.value.trim() ? { topic: topic.value.trim() } : {});
 
   function promptCard(title, text, kind) {
@@ -93,7 +128,9 @@ export function studio() {
   }
   function render() {
     const vv = v();
-    if (tab === 'image') body.replaceChildren(
+    topic.hidden = tab === 'notebook';
+    if (tab === 'notebook') { body.replaceChildren(); mountNotebook(body); }
+    else if (tab === 'image') body.replaceChildren(
       h('p', { class: 'note' }, 'Paste into any image generator. Built-in free image generation (daily limit) switches on when the cloud step is set up. Every prompt forbids real patients, identifiable people and written claims.'),
       h('div', { class: 'grid' }, ...P.IMAGE_STYLES.map(s => promptCard(s.name, P.fill(s.p, vv), 'image'))));
     else if (tab === 'video') body.replaceChildren(
@@ -187,6 +224,7 @@ export function profilePage() {
           h('label', { class: 'f' }, 'Main audience', aud), h('label', { class: 'f' }, 'Main platform', plat), h('label', { class: 'f' }, 'Tone', tone)),
         h('div', { class: 'row', style: 'margin-top:14px' }, h('button', { class: 'btn', type: 'button', onclick: save }, 'Save'))),
       h('div', { class: 'card' }, h('h3', {}, 'Your Evidara ID'), idBox,
-        h('p', { class: 'note' }, 'Format: DOMAIN-XXXXXC. For example CARD-7K3QX4 is a cardiology member. The domain code lets anyone browse people by specialty.')))));
+        h('p', { class: 'note' }, 'Format: DOMAIN-XXXXXC. For example CARD-7K3QX7 is a cardiology member. The domain code lets anyone browse people by specialty.')))));
+  view.querySelector('.section')?.append(h('div', { class: 'row', style: 'margin-top:20px' }, h('a', { class: 'btn', href: '#publish' }, 'Publish a post'), h('a', { class: 'btn ghost', href: '#people' }, 'People directory'), h('a', { class: 'btn ghost', href: '#library' }, 'My Library'), h('a', { class: 'btn ghost', href: '#admin' }, 'Admin portal')), h('div', { style: 'margin-top:20px' }, verificationCard()));
   showId();
 }

@@ -52,7 +52,7 @@
   --bg: #0a0e13;
   --bg-grad: radial-gradient(70% 60% at 85% 10%, rgba(122,92,255,.28) 0%, rgba(122,92,255,0) 70%),
              radial-gradient(60% 50% at 10% 90%, rgba(57,255,182,.16) 0%, rgba(57,255,182,0) 70%),
-             #0a0e13;
+             linear-gradient(#0a0e13, #0a0e13);
   --frame: rgba(255,255,255,.02);
   --surface: #121821;
   --surface-2: #19212d;

@@ -28,26 +28,34 @@ const lineSecs = l => (words(l.t) / 2.6) / S.rate; // ~156 words per minute at 1
 const fmt = s => `${Math.floor(s / 60)}:${String(Math.floor(s % 60)).padStart(2, '0')}`;
 const cur = () => S.queue[S.idx];
 
-export async function buildEpisode(a, format = 'brief', length = 'normal') {
+export async function buildEpisode(a, format = 'short', length = 'normal', parts = null) {
+  format = Audio.fmtId(format);
   if (!reuse(a).derivatives) throw new Error('This paper\'s licence does not allow audio versions');
   let full = null;
   if (a.pmcid && a.hasFullText) { try { full = await getFullText(a.pmcid); } catch { /* abstract only */ } }
   const abs = abstractSections(a.abstractHtml);
   const absUse = abs.length ? abs : (full?.abstract || []);
-  const script = Audio.buildScript(a, { format, length, abstract: absUse, full });
+  const script = Audio.buildScript(a, { format, length, abstract: absUse, full, parts });
   const fig = full?.figures?.find(f => f.href);
   return { key: keyOf(a), title: a.title, journal: a.journal, year: a.year, format, formatName: Audio.FORMATS[format].name,
     lines: script.lines, basis: script.basis, cover: fig ? figCandidates(a.pmcid, fig.href) : [] };
 }
 
-export async function enqueue(a, format = 'brief', { playNow = false, length = 'normal' } = {}) {
+export async function enqueue(a, format = 'short', { playNow = false, length = 'normal', parts = null } = {}) {
   try {
-    const ep = await buildEpisode(a, format, length);
+    const ep = await buildEpisode(a, format, length, parts);
+    if (parts) ep.format += ':' + parts.join(',');
     const existing = S.queue.findIndex(e => e.key === ep.key && e.format === ep.format);
     if (existing >= 0) { if (playNow) playAt(existing); else toast('Already in your queue'); return; }
     S.queue.push(ep);
     if (playNow || S.idx < 0) playAt(S.queue.length - 1); else { toast(`Queued: ${ep.formatName}`); emit(); }
   } catch (e) { toast(e.message); }
+}
+
+// Ready-made episode (e.g. from a Studio document).
+export function enqueueEpisode(ep, playNow = true) {
+  S.queue.push(ep);
+  if (playNow || S.idx < 0) playAt(S.queue.length - 1); else emit();
 }
 
 export function playAt(i) {
@@ -137,11 +145,7 @@ function render() {
     onclick: e => { const r = e.currentTarget.getBoundingClientRect(); seekLine(Math.floor(((e.clientX - r.left) / r.width) * ep.lines.length)); },
     onkeydown: e => { if (e.key === 'ArrowRight') skipSecs(15); if (e.key === 'ArrowLeft') skipSecs(-15); } },
     h('div', { class: 'prog-fill', style: `width:${(S.line / Math.max(1, ep.lines.length)) * 100}%` }));
-  const panel = S.showTranscript ? h('div', { class: 'pl-panel' },
-    h('div', { class: 'pl-panel-head' }, h('b', {}, 'Transcript'), h('span', { class: 'meta' }, ` Built from the ${ep.basis}. Every content line is the paper's own sentence.`)),
-    ...ep.lines.map((l, i) => h('button', { class: 'tline' + (i === S.line ? ' on' : ''), type: 'button', onclick: () => seekLine(i) },
-      h('b', {}, l.who === 'B' ? 'Host B' : 'Host A'), ' ', l.t, h('span', { class: 'src' }, l.src ? ` from: ${l.src}` : ' signpost')))) :
-    S.showQueue ? h('div', { class: 'pl-panel' }, h('div', { class: 'pl-panel-head' }, h('b', {}, 'Queue')),
+  const panel = S.showQueue ? h('div', { class: 'pl-panel' }, h('div', { class: 'pl-panel-head' }, h('b', {}, 'Queue')),
       ...S.queue.map((e, i) => h('div', { class: 'qrow' + (i === S.idx ? ' on' : '') }, coverEl(e, 'cover xs'),
         h('button', { class: 'qtitle', type: 'button', onclick: () => playAt(i) }, h('b', {}, e.formatName), ' ', e.title),
         btn('close', 'Remove from queue', () => removeAt(i))))) : null;
@@ -158,8 +162,7 @@ function render() {
         h('div', { class: 'pl-time' }, h('span', {}, fmt(done)), prog, h('span', {}, fmt(total)))),
       h('div', { class: 'pl-right' },
         h('button', { class: 'pbtn rate', type: 'button', 'aria-label': 'Playback speed', onclick: cycleRate }, `${S.rate}×`),
-        btn('transcript', S.showTranscript ? 'Hide transcript' : 'Show transcript', () => { S.showTranscript = !S.showTranscript; S.showQueue = false; render(); }, S.showTranscript ? 'on' : ''),
-        btn('queue', 'Queue', () => { S.showQueue = !S.showQueue; S.showTranscript = false; render(); }, S.showQueue ? 'on' : ''),
+        btn('queue', 'Queue', () => { S.showQueue = !S.showQueue; render(); }, S.showQueue ? 'on' : ''),
         btn('close', 'Close player', () => { pause(); S.queue = []; S.idx = -1; emit(); }))));
 }
 

@@ -1,15 +1,17 @@
 // Paper page (alphaXiv /abs style, landscape): Overview · Read paper · Figures · Author statements · Discuss.
 import { h, store, toast, copyText, download, spinner, splitSentences, uid } from './util.js';
 import { icon } from './icons.js';
-import { getArticle, getFullText, abstractSections, keyOf, relatedPapers, articleKeyFromWork } from './api.js';
+import { getArticle, getFullText, abstractSections, keyOf, relatedPapers, articleKeyFromWork, openAccessLink } from './api.js';
 import { checks, score, studyDesign, reuse } from './verify.js';
 import { STYLES as CITE } from './cite.js';
-import { figImg, pdfUrl } from './figures.js';
+import { figImg, pdfUrl, figCandidates } from './figures.js';
+import { videoPlayer, paperSlides } from './vplayer.js';
+import { idb } from './idb.js';
 import * as Audio from './audio.js';
 import * as Pod from './podcast.js';
 import * as Vid from './video.js';
 import * as Lib from './library.js';
-import { theme, updateQuotaLine, profile } from './core.js';
+import { theme, updateQuotaLine, profile, bloomSVG } from './core.js';
 import { authorChips, likes, share, saveToLibrary } from './feed.js';
 
 const view = document.getElementById('view');
@@ -40,7 +42,7 @@ export async function paper([key, tabArg]) {
     h('div', { class: 'actions' }, likeB,
       h('button', { class: 'act', type: 'button', onclick: () => saveToLibrary(a) }, icon('bookmark', 18), h('span', {}, 'Save')),
       h('button', { class: 'act', type: 'button', onclick: () => share(a) }, icon('share', 18), h('span', {}, 'Share')),
-      reuse(a).derivatives ? h('button', { class: 'act', type: 'button', onclick: () => Pod.enqueue(a, 'deep', { playNow: true }) }, icon('headphones', 18), h('span', {}, 'Play Deep Dive')) : null,
+      reuse(a).derivatives ? h('button', { class: 'act', type: 'button', onclick: () => Pod.enqueue(a, 'long', { playNow: true }) }, icon('headphones', 18), h('span', {}, 'Play audio')) : null,
       reuse(a).derivatives ? h('a', { class: 'act', href: `#reels/${encodeURIComponent(k)}` }, icon('reels', 18), h('span', {}, 'Reel')) : null,
       a.pmcid ? h('a', { class: 'act', href: pdfUrl(a.pmcid), target: '_blank', rel: 'noopener noreferrer' }, icon('pdf', 18), h('span', {}, 'PDF')) : null,
       ...links.map(([l, u]) => h('a', { class: 'act', href: u, target: '_blank', rel: 'noopener noreferrer' }, icon('external', 16), h('span', {}, l)))),
@@ -90,6 +92,7 @@ function overview(box, ctx) {
     ctx.abs.length ? h('div', { class: 'abstract' }, ...ctx.abs.map(s => [h('h4', {}, s.title), h('p', {}, s.text)])) : h('p', { class: 'meta' }, ctx.full || ctx.fullErr ? 'No abstract in this record.' : 'Loading abstract from full text…')));
   box.append(podcastCard(ctx));
   if (reuse(a).derivatives) box.append(videoCard(ctx));
+  box.append(myVideos(ctx));
   if (ctx.full?.figures?.some(f => f.href)) {
     box.append(h('div', { class: 'card' }, h('div', { class: 'rhead' }, h('h3', {}, 'Key figures'), h('button', { class: 'linkbtn', type: 'button', onclick: () => document.querySelectorAll('.seg.wide button')[2].click() }, 'All figures ›')),
       h('div', { class: 'figstrip' }, ...ctx.full.figures.filter(f => f.href).slice(0, 4).map(f => h('figure', {}, figImg(a.pmcid, f), h('figcaption', {}, f.label || 'Figure'))))));
@@ -107,68 +110,95 @@ function overview(box, ctx) {
 function podcastCard(ctx) {
   const { a } = ctx;
   const r = reuse(a);
-  if (!r.derivatives) return h('div', { class: 'card' }, h('h3', {}, 'Podcast'), h('p', { class: 'note' }, `Audio is off for this paper. ${r.allows}`));
-  let format = store.get('podFormat', 'deep'), length = store.get('podLength', 'normal');
-  const fmtSeg = h('div', { class: 'seg small' }, ...Object.entries(Audio.FORMATS).map(([id, f]) => h('button', { type: 'button', class: id === format ? 'on' : '', onclick: e => {
-    format = id; store.set('podFormat', id); fmtSeg.querySelectorAll('button').forEach(b => b.classList.toggle('on', b === e.currentTarget)); desc.textContent = f.desc; if (tr.open) drawTr(); } }, f.name)));
-  const lenSeg = h('div', { class: 'seg small' }, ...Object.entries(Audio.LENGTHS).map(([id, l]) => h('button', { type: 'button', class: id === length ? 'on' : '', onclick: e => {
-    length = id; store.set('podLength', id); lenSeg.querySelectorAll('button').forEach(b => b.classList.toggle('on', b === e.currentTarget)); if (tr.open) drawTr(); } }, l.name)));
-  const desc = h('p', { class: 'meta' }, Audio.FORMATS[format].desc);
-  const trBody = h('div', {});
-  const drawTr = () => {
-    const s = Audio.buildScript(a, { format, length, abstract: ctx.abs, full: ctx.full });
-    trBody.replaceChildren(h('div', { class: 'meta' }, `Built from the ${s.basis}. Every content line is the paper's own sentence; its source section is shown.`),
-      ...s.lines.map(l => h('div', { class: 'script-line' }, h('div', { class: 'who' }, l.who === 'B' ? 'HOST B' : 'HOST A'), h('div', {}, l.t, h('span', { class: 'src' }, l.src ? `from: ${l.src}` : 'signpost (no claim)')))));
+  if (!r.derivatives) return h('div', { class: 'card' }, h('h3', {}, 'Audio'), h('p', { class: 'note' }, `Audio is off for this paper. ${r.allows}`));
+  let format = Audio.fmtId(store.get('podFormat', 'short'));
+  let parts = store.get('podParts', ['background', 'results', 'conclusion', 'limitations']);
+  let length = store.get('podLength', 'normal');
+  const desc = h('p', { class: 'meta' });
+  const custom = h('div', { class: 'custombox' });
+  const drawCustom = () => {
+    custom.hidden = format !== 'custom';
+    custom.replaceChildren(
+      h('div', { class: 'chips' }, ...Audio.CUSTOM_PARTS.map(([id, l]) => h('button', { type: 'button', class: 'chip pick' + (parts.includes(id) ? ' on' : ''), onclick: () => {
+        parts = parts.includes(id) ? parts.filter(x => x !== id) : [...parts, id]; if (!parts.length) parts = ['results']; store.set('podParts', parts); drawCustom(); } }, l))),
+      h('div', { class: 'seg small' }, ...Object.entries(Audio.LENGTHS).map(([id, l]) => h('button', { type: 'button', class: id === length ? 'on' : '', onclick: () => { length = id; store.set('podLength', id); drawCustom(); } }, `${l.name} depth`))));
   };
-  const tr = h('details', { class: 'transcript' }, h('summary', {}, 'Show transcript'), trBody);
-  tr.addEventListener('toggle', () => { if (tr.open) drawTr(); });
+  const fmtSeg = h('div', { class: 'seg' });
+  const drawFmt = () => {
+    fmtSeg.replaceChildren(...Object.entries(Audio.FORMATS).map(([id, f]) => h('button', { type: 'button', class: id === format ? 'on' : '', onclick: () => { format = id; store.set('podFormat', id); drawFmt(); } }, f.name)));
+    desc.textContent = Audio.FORMATS[format].desc; drawCustom();
+  };
+  drawFmt();
+  const opts = () => ({ length, parts: format === 'custom' ? parts : null });
   const fig = ctx.full?.figures?.find(f => f.href);
-  const coverBox = h('div', { class: 'cover lg' }, fig ? figImg(a.pmcid, fig) : null, h('span', { class: 'cover-tag' }, 'Evidara podcast'));
+  const coverBox = h('div', { class: 'cover lg' }, fig ? figImg(a.pmcid, fig) : bloomSVG(), h('span', { class: 'cover-tag' }, 'Evidara audio'));
+  const eq = h('div', { class: 'eq', 'aria-hidden': 'true' }, ...Array.from({ length: 24 }, (_, i) => h('i', { style: `animation-delay:${(i % 8) * 0.11}s` })));
+  const off = Pod.onChange(s => { if (!document.body.contains(eq)) { off(); return; } eq.classList.toggle('on', !!(s.playing && s.queue[s.idx]?.key === keyOf(a))); });
   return h('div', { class: 'card podcard' },
     coverBox,
     h('div', { class: 'podbody' },
-      h('div', { class: 'meta' }, 'PODCAST · NOTEBOOKLM-STYLE FORMATS'),
+      h('div', { class: 'meta' }, 'AUDIO TRACK'),
       h('h3', {}, 'Listen to this paper'),
-      fmtSeg, lenSeg, desc,
+      fmtSeg, desc, custom,
       h('div', { class: 'row' },
-        h('button', { class: 'playbig', type: 'button', 'aria-label': 'Play', onclick: () => Pod.enqueue(a, format, { playNow: true, length }) }, icon('play', 26)),
-        h('button', { class: 'btn ghost small', type: 'button', onclick: () => Pod.enqueue(a, format, { length }) }, '+ Add to queue'),
-        h('button', { class: 'btn ghost small', type: 'button', onclick: () => { const s = Audio.buildScript(a, { format, length, abstract: ctx.abs, full: ctx.full }); Lib.add({ kind: 'audio', title: `${Audio.FORMATS[format].name}: ${a.title}`, source: keyOf(a), status: 'made', script: Audio.toText(a, s) }); toast('Added to Library'); } }, 'Save episode')),
-      tr));
+        h('button', { class: 'playbig', type: 'button', 'aria-label': 'Play', onclick: () => Pod.enqueue(a, format, { playNow: true, ...opts() }) }, icon('play', 26)),
+        h('button', { class: 'btn ghost small', type: 'button', onclick: () => Pod.enqueue(a, format, opts()) }, '+ Queue'),
+        h('button', { class: 'btn ghost small', type: 'button', onclick: () => { Lib.add({ kind: 'audio', title: `${Audio.FORMATS[format].name}: ${a.title}`, source: keyOf(a), status: 'made' }); toast('Saved to Library'); } }, 'Save'), eq),
+      h('p', { class: 'meta' }, 'Every spoken line is the paper\'s own sentence. Plays in the bar below while you browse.')));
 }
 
 function videoCard(ctx) {
   const { a } = ctx;
-  const canvas = h('canvas', { class: 'preview', width: 1080, height: 1920 });
-  const out = h('div', { class: 'row' });
-  const slides = () => {
-    const secs = [...ctx.abs, ...(ctx.full?.sections || [])];
-    const res = secs.filter(s => /result|finding|conclusion/i.test(s.title)).flatMap(s => splitSentences(s.text));
-    const lim = secs.flatMap(s => splitSentences(s.text)).find(t => /\blimitation/i.test(t));
-    return Vid.slidesFor(a, { finding: res[0], limitation: lim, design: studyDesign(a), theme: theme() });
+  const secs = [...ctx.abs, ...(ctx.full?.sections || [])];
+  const res = secs.filter(s => /result|finding|conclusion/i.test(s.title)).flatMap(s => splitSentences(s.text));
+  const lim = secs.flatMap(s => splitSentences(s.text)).find(t => /\blimitation/i.test(t));
+  const fig = ctx.full?.figures?.find(f => f.href);
+  const slides = paperSlides(a, { finding: res[0], limitation: lim, fig, figUrls: fig ? figCandidates(a.pmcid, fig.href) : null, design: studyDesign(a) });
+  const player = videoPlayer({ title: a.title, slides, aspect: '16:9', downloadName: `evidara-${(a.authors[0]?.last || 'paper').replace(/\W/g, '')}${a.year}.webm` });
+  return h('div', { class: 'card' }, h('div', { class: 'rhead' }, h('h3', {}, 'Video'), h('a', { href: `#reels/${encodeURIComponent(keyOf(a))}` }, 'Open as reel ›')),
+    player, h('p', { class: 'meta' }, 'Animated from the paper itself. Narration uses your device\'s voice. Keys: space play, ←/→ slides, C captions, M narration, F fullscreen.'));
+}
+
+// Your own videos for an article (as many as you like). Stored in this browser; sharing them publicly goes through Publish.
+function myVideos(ctx) {
+  const key = 'vid:' + keyOf(ctx.a) + ':';
+  const list = h('div', { class: 'myvids' });
+  const draw = async () => {
+    const ks = await idb.keys(key);
+    if (!ks.length) { list.replaceChildren(h('div', { class: 'meta' }, 'No videos yet. Add explainer clips, talks or lab demos (no patients).')); return; }
+    const items = await Promise.all(ks.map(async k => ({ k, v: await idb.get(k) })));
+    list.replaceChildren(...items.filter(x => x.v).map(({ k, v }) => {
+      const url = URL.createObjectURL(v.blob);
+      return h('figure', { class: 'myvid' }, h('video', { src: url, controls: true, preload: 'metadata', playsinline: true }),
+        h('figcaption', {}, h('b', {}, v.name), h('span', { class: 'meta' }, ` · ${(v.blob.size / 1048576).toFixed(1)} MB · ${new Date(v.at).toLocaleDateString()}`),
+          h('button', { class: 'linkbtn', type: 'button', onclick: async () => { await idb.del(k); URL.revokeObjectURL(url); draw(); } }, ' Remove')));
+    }));
   };
-  const draw = () => { try { Vid.drawSlide(canvas.getContext('2d'), slides()[0], 0, 4, 0); } catch {} };
-  (document.fonts?.ready || Promise.resolve()).then(draw);
-  const rec = h('button', { class: 'btn', type: 'button', disabled: !Vid.canRecord(), onclick: async () => {
-    if (!Lib.spend('video')) { toast('Daily free video limit reached. It refreshes tomorrow.'); return; }
-    updateQuotaLine(); rec.disabled = true; rec.textContent = 'Rendering… (16 s)';
-    try {
-      const blob = await Vid.record(canvas, slides(), 4);
-      const url = URL.createObjectURL(blob);
-      const name = `evidara-${(a.authors[0]?.last || 'paper').replace(/\W/g, '')}${a.year}.webm`;
-      out.replaceChildren(h('a', { class: 'btn small', href: url, download: name }, 'Download video'),
-        h('button', { class: 'btn small ghost', type: 'button', onclick: () => { Lib.add({ kind: 'video', title: `Video abstract: ${a.title}`, source: keyOf(a), status: 'made', storage: 'downloaded file', link: name }); toast('Added to Library'); } }, 'Add to Library'));
-    } catch (e) { toast('Recording failed: ' + e.message); }
-    rec.disabled = false; rec.textContent = 'Render & download video';
-  } }, 'Render & download video');
-  return h('div', { class: 'card' }, h('h3', {}, 'Video abstract'),
-    h('div', { class: 'vidrow' }, canvas, h('div', {},
-      h('p', { class: 'meta' }, 'A 9:16 video made in your browser: the title, a verbatim finding, a verbatim limitation and the source, in your current theme.'),
-      h('div', { class: 'row' }, rec, h('a', { class: 'btn ghost', href: `#reels/${encodeURIComponent(keyOf(a))}` }, 'Watch as reel')), out)));
+  const input = h('input', { type: 'file', accept: 'video/mp4,video/webm,video/quicktime', multiple: true, hidden: true, onchange: async () => {
+    let added = 0;
+    for (const f of input.files) {
+      if (f.size > 500 * 1048576) { toast(`${f.name} is over 500 MB`); continue; }
+      if (await idb.set(key + Date.now() + '-' + Math.random().toString(36).slice(2, 6), { name: f.name, blob: f, at: Date.now() })) added++;
+    }
+    toast(added ? `Added ${added} video${added > 1 ? 's' : ''}` : 'Could not store the video (browser storage full or blocked)'); input.value = ''; draw();
+  } });
+  draw();
+  return h('div', { class: 'card' }, h('div', { class: 'rhead' }, h('h3', {}, 'Your videos for this article'),
+    h('button', { class: 'btn small', type: 'button', onclick: () => input.click() }, '+ Upload videos')), input,
+    h('p', { class: 'note' }, 'Saved privately in this browser. Never upload videos that show patients or identifiable people without consent. To share publicly, attach them in Publish.'), list);
 }
 
 // ---------- Read paper ----------
 function read(box, ctx) {
+  if (!ctx.full && ctx.fullErr && ctx.a.doi) {
+    const alt = h('div', { class: 'card' }, h('h3', {}, 'Free full text elsewhere'), h('div', { class: 'meta' }, 'Looking for a legal open-access copy (OpenAlex)…'));
+    box.append(alt);
+    openAccessLink(ctx.a.doi).then(o => alt.replaceChildren(h('h3', {}, 'Free full text elsewhere'), o && (o.pdf || o.landing)
+      ? h('div', { class: 'row' }, o.pdf ? h('a', { class: 'btn', href: o.pdf, target: '_blank', rel: 'noopener noreferrer' }, 'Open free PDF ↗') : null,
+          o.landing ? h('a', { class: 'btn ghost', href: o.landing, target: '_blank', rel: 'noopener noreferrer' }, `Read at ${o.host || 'the publisher'} ↗`) : null,
+          h('span', { class: 'meta' }, `${o.status ? 'Open access: ' + o.status : ''}${o.license ? ' · ' + o.license.toUpperCase() : ''}`))
+      : h('p', { class: 'meta' }, 'No legal free copy is listed for this paper. Evidara only links open-access versions.'))).catch(() => alt.replaceChildren(h('h3', {}, 'Free full text elsewhere'), h('p', { class: 'meta' }, 'Could not check right now.')));
+  }
   if (waitFull(box, ctx)) return;
   const { a, full } = ctx;
   const toc = h('nav', { class: 'toc', 'aria-label': 'Sections' }, h('b', {}, 'Contents'));

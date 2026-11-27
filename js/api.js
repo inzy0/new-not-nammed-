@@ -19,9 +19,9 @@ async function getJSON(url) {
 
 function isoDaysAgo(n) { const d = new Date(Date.now() - n * 864e5); return d.toISOString().slice(0, 10); }
 
-export async function searchArticles({ query, days = 30, openOnly = true, pageSize = 24, cursor = '*', sort = 'date' }) {
+export async function searchArticles({ query, raw = '', days = 30, openOnly = true, pageSize = 24, cursor = '*', sort = 'date' }) {
   // Title + abstract only: full-text matching pulls in papers that merely mention a term.
-  let q = `TITLE_ABS:(${query})`;
+  let q = `TITLE_ABS:(${query})${raw}`;
   if (openOnly) q += ' AND OPEN_ACCESS:y';
   if (days) q += ` AND FIRST_PDATE:[${isoDaysAgo(days)} TO ${isoDaysAgo(0)}]`;
   const sortParam = sort === 'cited' ? 'CITED desc' : 'FIRST_PDATE_D desc';
@@ -210,3 +210,36 @@ export async function openAccessTotal() {
 }
 
 export function articleKeyFromWork(w) { return w.pmcid || (w.pmid ? `MED:${w.pmid}` : w.doi); }
+
+// Best legal open-access copy of a paper (OpenAlex best_oa_location), for papers without Europe PMC full text.
+export async function openAccessLink(doi) {
+  const w = await getJSON(`${OA}/works/doi:${encodeURIComponent(doi)}?select=open_access,best_oa_location,is_retracted`);
+  const loc = w.best_oa_location || {};
+  return { pdf: loc.pdf_url || null, landing: loc.landing_page_url || w.open_access?.oa_url || null, license: loc.license || '', status: w.open_access?.oa_status || '',
+    host: loc.source?.display_name || '', retracted: !!w.is_retracted };
+}
+
+// Reference check for Publish: does this DOI exist, what is it, and is it retracted? (OpenAlex)
+export async function checkDoi(doi) {
+  try {
+    const w = await getJSON(`${OA}/works/doi:${encodeURIComponent(doi)}?select=display_name,publication_year,is_retracted,doi`);
+    return { ok: true, title: w.display_name, year: w.publication_year, retracted: !!w.is_retracted };
+  } catch (e) { return { ok: false, error: /404/.test(e.message) ? 'DOI not found' : e.message }; }
+}
+
+// Auto-listed researchers for a domain: OpenAlex subfield matched by name, top by citations, optional country.
+const subfieldCache = new Map();
+export async function domainResearchers(label, country = '') {
+  let sf = subfieldCache.get(label);
+  if (sf === undefined) {
+    const j = await getJSON(`${OA}/subfields?search=${encodeURIComponent(label.split(/[(&/]/)[0].trim())}&select=id,display_name&per-page=1`);
+    sf = j.results?.[0] ? { id: j.results[0].id.split('/').pop(), name: j.results[0].display_name } : null;
+    subfieldCache.set(label, sf);
+  }
+  if (!sf) return { subfield: null, list: [] };
+  const f = `topics.subfield.id:${sf.id}` + (country ? `,last_known_institutions.country_code:${country}` : '');
+  const j = await getJSON(`${OA}/authors?filter=${f}&sort=cited_by_count:desc&per-page=24&select=id,display_name,orcid,works_count,cited_by_count,summary_stats,last_known_institutions,topics`);
+  return { subfield: sf, total: j.meta?.count || 0, list: (j.results || []).map(a => ({ id: a.id.split('/').pop(), name: a.display_name, orcid: a.orcid ? a.orcid.split('/').pop() : null,
+    works: a.works_count, cites: a.cited_by_count, h: a.summary_stats?.h_index, inst: a.last_known_institutions?.[0]?.display_name || '', country: a.last_known_institutions?.[0]?.country_code || '',
+    topics: (a.topics || []).slice(0, 3).map(t => t.display_name) })) };
+}

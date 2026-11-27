@@ -1,53 +1,42 @@
 # Evidara (working name)
 
-A free platform for healthcare professionals and researchers: **read → verify → cite → create → share**.
+A free platform for healthcare professionals and researchers: **read → verify → cite → create → publish → discuss**.
 
-**Live site (once GitHub Pages is on):** https://inzy0.github.io/new-not-nammed-/
+**Live site:** https://inzy0.github.io/new-not-nammed-/
 
-## What works now (v0.2)
+## What works now (v0.3)
 
-Layout: alphaXiv-style wide layout. Sidebar, live feed and a right-hand rail on desktop and laptop; bottom tabs on phones.
+| Part | What it does |
+|---|---|
+| **Explore** | alphaXiv-style live feed with Instagram-style domain "stories" and reel strips between posts. Feeds: **For you · All fields · Trending · Must-read · Underrated gems · Preprints · India focus · Liked · Community**, each stating how it is built. **Paper of the day** (one high-evidence open-access paper per day). Infinite scroll, a new-papers alert, search across 8+ million open-access papers. |
+| **Paper page** | Overview (abstract, **audio track**, **video player**, **your own videos** (upload as many as you like), key figures, related papers) · **Read paper** (full text with contents and figures; a legal free copy via OpenAlex when Europe PMC has none) · Figures · Author statements · Discuss |
+| **Audio** | Spotify-style player that keeps playing across pages. Four types: **Short, Briefing, Long, Customised** (choose sections and depth). No scripts on screen; every spoken line is the paper's own sentence. |
+| **Video player** | Play/pause, slides scrubber, speed, narration on/off, captions, 16:9 ↔ 9:16, fullscreen, keyboard shortcuts, WebM download |
+| **Reels** | Vertical swipe feed animated from each paper's title, figure, finding, limitation and citation |
+| **Studio · Notebook** | NotebookLM-style: add PDFs, text, Markdown, a paper or pasted text → **one audio track, one video and images** (quote cards and page images). Runs in your browser; nothing is uploaded. Documents with patient identifiers are refused. |
+| **Publish** | Type, title, keywords, structured abstract, full paper sections, images and videos, conclusion and discussion, a clearly labelled personal view and suggestions, references (every DOI checked for existence and retraction), authors with Evidara ID / ORCID (check digit verified) / affiliation / CRediT roles, and declarations (ethics, consent, registration format check, reporting guideline, funding, COI, data, AI use, originality, image rights). A live verification report with a completeness score. |
+| **Admin portal** | Passphrase-protected on the admin's device. Import member verification requests and submissions, check IDs, ORCIDs and documents, approve, then export `members.json` / `posts.json` to publish to everyone. |
+| **People** | Auto-listed: verified members, plus top researchers in your field (OpenAlex), worldwide or India. Follow anyone. Search and ID lookup stay available. |
+| **Verification card** | Retraction, corrections, preprint or journal, study design, licence, funding, COI, data availability, registration |
+| **Also** | Citations (Vancouver/AMA/APA/BibTeX), Library with schedule and calendar export, Evidara IDs (`CARD-7K3QX7` style, typo-catching check character), 5 theme templates, a moving background, page transitions and scroll animations (off when the device asks for reduced motion) |
 
-| Part | What it does | Data / tech |
-|---|---|---|
-| Explore (live feed) | Search across millions of open-access papers. **For you** (your domain feeds), **Trending** (most cited, last 90 days), **Latest** (all). Filters for study design, time window and preprints. Infinite scroll, a "new papers" alert every 3 minutes, and each paper's own figure on its card. Daily Bloom hero carousel. | Europe PMC REST, PMC Open Access archive |
-| Paper page | **Overview** (abstract, podcast, video abstract, key figures, related papers) · **Read paper** (full text with contents and inline figures, PDF) · **Figures** (every figure with the authors' caption) · **Author statements** (limitations, contributions, funding, COI, data availability, ethics, affiliations, and a slot for author video/image/audio) · **Discuss** (chat-style thread to the authors: question / issue / unresolved gap / comment, with replies and a patient-identifier block) | Europe PMC JATS full text, OpenAlex |
-| Verification card | Retraction / expression of concern / corrections, preprint vs journal, study design, licence and what it permits, funding, COI and data-availability statements, registration ID, citations | Europe PMC |
-| Podcasts | Spotify-style player that keeps playing while you browse: cover, play/pause, ±15 s, next/previous, seek, speed, queue, phone lock-screen controls. Transcript hidden unless you open it. Formats: **Deep Dive, The Brief, The Critique, The Debate** in three lengths. Every spoken content line is the paper's own sentence. | Browser speech (free, offline) |
-| Reels | Vertical swipe feed. Each reel is animated from the paper: title, figure with the authors' caption, a verbatim finding, a verbatim limitation, the citation. Like, listen, save, share, discuss. | Same sources |
-| Citations | Vancouver, AMA, APA, BibTeX | From the record |
-| Video abstract | 9:16 WebM rendered in the browser, downloadable | Canvas + MediaRecorder |
-| Studio | 16 image styles, 12 video formats, 12 hooks and audio concepts, personalised by domain, audience, platform, tone and theme. Overclaiming words are flagged. | Hand-written templates |
-| Library | Idea → Made → Scheduled → Posted, with calendar (.ics) and JSON backup | Browser storage |
-| Evidara ID | `DOMAIN-XXXXXC`, e.g. `CARD-7K3QX4`, with a typo-catching check character | Crockford base32 + Luhn mod 32 |
-| Researchers | Search and profiles (most cited / recent, citations per year, topics, ORCID), marked "unclaimed"; follow authors from your feed | OpenAlex |
-| Themes | Bloom, Ink, Pulse, Saffron, Clinic | Google Fonts (OFL) |
+## How publishing works on a free static site
 
-**Not live yet (needs the free cloud backend, see roadmap):** shared discussion between users (messages stay on your
-device until sign-in), authors posting their own media, built-in image generation, MP3 download, reserved IDs.
+Members send a **verification request** (from Profile) or a **submission package** (from Publish) to the admin
+privately. The admin reviews it in the Admin portal and exports `data/members.json` and `data/posts.json`, which are
+committed to this repository. Only repository access can publish. Documents and registration numbers are never exported.
 
 ## Rules the platform keeps
 
-- **No patient data, ever.**
-- **No invented content about papers.** Audio and video use the paper's own sentences. Fixed signpost lines carry no claims.
-- **Licence decides reuse.** Audio and video are made only when the article licence permits adaptations (CC BY, CC0, or BY-NC on this non-commercial site). ND and unlicensed articles are read-and-cite only.
+- **No patient data, ever.** Every text path is screened. The screen is a safety net, not a guarantee.
+- **No invented content about papers.** Audio, video and reels use the paper's own sentences and figures.
+- **Licence decides reuse.** Adaptations are made only when the article licence allows them.
 - **A passed check means the record shows it, not that the findings are right.**
-- AI-generated images are labelled as illustrations, and the prompts forbid real patients and written claims.
 
 ## Run locally
 
-Any static file server works, for example:
-
-```
-python -m http.server 5131
-```
-
-Then open http://127.0.0.1:5131/.
-
-## Roadmap
-
-See [docs/ROADMAP.md](docs/ROADMAP.md).
+`python -m http.server 5131` in this folder, then open http://127.0.0.1:5131/.
 
 ## Credits
 
-Data: [Europe PMC](https://europepmc.org) and [OpenAlex](https://openalex.org). Each article's own licence applies to its text and figures.
+Data: [Europe PMC](https://europepmc.org), [OpenAlex](https://openalex.org) and the PMC Open Access archive (AWS Open Data). PDF reading: [pdf.js](https://github.com/mozilla/pdf.js) (Apache-2.0, in `vendor/`). Fonts: Google Fonts (OFL). Each article's own licence applies to its text and figures.
