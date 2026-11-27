@@ -229,15 +229,16 @@ export async function checkDoi(doi) {
 
 // Auto-listed researchers for a domain: OpenAlex subfield matched by name, top by citations, optional country.
 const subfieldCache = new Map();
+const tf = id => id === 'ALL' ? 'topics.domain.id:4' : `topics.subfield.id:${id}`;
 export async function domainResearchers(label, country = '') {
-  let sf = subfieldCache.get(label);
+  let sf = label === 'All fields' ? { id: 'ALL', name: 'Health Sciences (all fields)' } : subfieldCache.get(label);
   if (sf === undefined) {
     const j = await getJSON(`${OA}/subfields?search=${encodeURIComponent(label.split(/[(&/]/)[0].trim())}&select=id,display_name&per-page=1`);
     sf = j.results?.[0] ? { id: j.results[0].id.split('/').pop(), name: j.results[0].display_name } : null;
     subfieldCache.set(label, sf);
   }
   if (!sf) return { subfield: null, list: [] };
-  const f = `topics.subfield.id:${sf.id}` + (country ? `,last_known_institutions.country_code:${country}` : '');
+  const f = tf(sf.id) + (country ? `,last_known_institutions.country_code:${country}` : '');
   const j = await getJSON(`${OA}/authors?filter=${f}&sort=cited_by_count:desc&per-page=24&select=id,display_name,orcid,works_count,cited_by_count,summary_stats,last_known_institutions,topics`);
   return { subfield: sf, total: j.meta?.count || 0, list: (j.results || []).map(a => ({ id: a.id.split('/').pop(), name: a.display_name, orcid: a.orcid ? a.orcid.split('/').pop() : null,
     works: a.works_count, cites: a.cited_by_count, h: a.summary_stats?.h_index, inst: a.last_known_institutions?.[0]?.display_name || '', country: a.last_known_institutions?.[0]?.country_code || '',
@@ -246,6 +247,7 @@ export async function domainResearchers(label, country = '') {
 
 // ---------- map data (OpenAlex) ----------
 export async function getSubfield(label) {
+  if (label === 'All fields') return { id: 'ALL', name: 'Health Sciences (all fields)' };
   let sf = subfieldCache.get(label);
   if (sf === undefined) {
     const j = await getJSON(`${OA}/subfields?search=${encodeURIComponent(label.split(/[(&/]/)[0].trim())}&select=id,display_name&per-page=1`);
@@ -266,7 +268,7 @@ export async function institutionsGeo(ids) {
 }
 const sinceISO = days => new Date(Date.now() - days * 864e5).toISOString().slice(0, 10);
 export async function domainInstitutions(sfId, country = '', days = 365) {
-  const f = `topics.subfield.id:${sfId},from_publication_date:${sinceISO(days)}` + (country ? `,authorships.countries:${country}` : '');
+  const f = `${tf(sfId)},from_publication_date:${sinceISO(days)}` + (country ? `,authorships.countries:${country}` : '');
   const j = await getJSON(`${OA}/works?filter=${f}&group_by=authorships.institutions.id&per-page=200`);
   const groups = (j.group_by || []).filter(g => g.key && g.key !== 'unknown');
   const counts = new Map(groups.map(g => [shortId(g.key), g.count]));
@@ -274,16 +276,16 @@ export async function domainInstitutions(sfId, country = '', days = 365) {
   return { total: j.meta?.count || 0, list: geo.map(g => ({ ...g, count: counts.get(g.id) || 0 })) };
 }
 export async function institutionPeople(instId, sfId) {
-  const j = await getJSON(`${OA}/authors?filter=last_known_institutions.id:${instId},topics.subfield.id:${sfId}&sort=cited_by_count:desc&per-page=10&select=id,display_name,orcid,works_count,cited_by_count,summary_stats`);
+  const j = await getJSON(`${OA}/authors?filter=last_known_institutions.id:${instId},${tf(sfId)}&sort=cited_by_count:desc&per-page=10&select=id,display_name,orcid,works_count,cited_by_count,summary_stats`);
   return (j.results || []).map(a => ({ id: shortId(a.id), name: a.display_name, orcid: a.orcid ? shortId(a.orcid) : null, works: a.works_count, cites: a.cited_by_count, h: a.summary_stats?.h_index }));
 }
 export async function institutionWorks(instId, sfId) {
-  const j = await getJSON(`${OA}/works?filter=authorships.institutions.id:${instId},topics.subfield.id:${sfId}&sort=publication_date:desc&per-page=10&select=id,display_name,doi,ids,publication_year,cited_by_count,open_access`);
+  const j = await getJSON(`${OA}/works?filter=authorships.institutions.id:${instId},${tf(sfId)}&sort=publication_date:desc&per-page=10&select=id,display_name,doi,ids,publication_year,cited_by_count,open_access`);
   return (j.results || []).map(w => ({ title: w.display_name, year: w.publication_year, cites: w.cited_by_count, oa: !!w.open_access?.is_oa,
     doi: w.doi ? w.doi.replace('https://doi.org/', '') : null, pmcid: w.ids?.pmcid ? shortId(w.ids.pmcid) : null, pmid: w.ids?.pmid ? shortId(w.ids.pmid) : null }));
 }
 export async function institutionCollabs(instId, sfId) {
-  const j = await getJSON(`${OA}/works?filter=authorships.institutions.id:${instId},topics.subfield.id:${sfId},from_publication_date:${sinceISO(730)}&group_by=authorships.institutions.id&per-page=30`);
+  const j = await getJSON(`${OA}/works?filter=authorships.institutions.id:${instId},${tf(sfId)},from_publication_date:${sinceISO(730)}&group_by=authorships.institutions.id&per-page=30`);
   return (j.group_by || []).map(g => ({ id: shortId(g.key), name: g.key_display_name, count: g.count })).filter(g => g.id && g.id !== instId).slice(0, 20);
 }
 export async function workPlaces(doi) {
@@ -294,6 +296,6 @@ export async function workPlaces(doi) {
   return { title: w.display_name, year: w.publication_year, doi, authors, places: geo };
 }
 export async function recentDomainWorks(sfId) {
-  const j = await getJSON(`${OA}/works?filter=topics.subfield.id:${sfId},is_oa:true,from_publication_date:${sinceISO(60)}&sort=cited_by_count:desc&per-page=12&select=display_name,doi,publication_year`);
+  const j = await getJSON(`${OA}/works?filter=${tf(sfId)},is_oa:true,from_publication_date:${sinceISO(60)}&sort=cited_by_count:desc&per-page=12&select=display_name,doi,publication_year`);
   return (j.results || []).filter(w => w.doi).map(w => ({ title: w.display_name, doi: w.doi.replace('https://doi.org/', ''), year: w.publication_year }));
 }

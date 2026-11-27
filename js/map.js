@@ -9,6 +9,7 @@ import { icon } from './icons.js';
 import { DOMAINS, domainByCode } from './ids.js';
 import { searchArticles, getArticle, getSubfield, domainInstitutions, institutionPeople, institutionWorks, institutionCollabs, institutionsGeo, workPlaces, recentDomainWorks, articleKeyFromWork } from './api.js';
 import { profile } from './core.js';
+import { online, user, api } from './backend.js';
 import { reduced } from './anim.js';
 
 const view = document.getElementById('view');
@@ -30,12 +31,13 @@ const darkTheme = () => ['bloom', 'pulse'].includes(document.documentElement.dat
 
 export async function mapPage([mode = 'universe', arg]) {
   const pr = profile();
-  const tabs = h('div', { class: 'seg' }, ...[['universe', 'Universe'], ['earth', 'Earth'], ['article', 'Articles']].map(([k, l]) =>
-    h('button', { type: 'button', class: k === mode ? 'on' : '', onclick: () => (location.hash = `#map/${k}${k === 'earth' ? '/' + (arg && domainByCode(arg) ? arg : pr.domain) : ''}`) }, l)));
+  const tabs = h('div', { class: 'seg' }, ...[['universe', 'Universe'], ['earth', 'Earth'], ['people', 'People'], ['article', 'Articles']].map(([k, l]) =>
+    h('button', { type: 'button', class: k === mode ? 'on' : '', onclick: () => (location.hash = `#map/${k}${k === 'earth' ? '/' + (arg && (domainByCode(arg) || arg === 'ALL') ? arg : pr.domain) : ''}`) }, l)));
   const stage = h('div', { class: 'mapstage' });
   view.replaceChildren(h('section', { class: 'mapwrap' }, h('div', { class: 'maphead glass' }, h('h2', {}, 'Map'), tabs, h('span', { class: 'meta maphint' })), stage));
   const hint = view.querySelector('.maphint');
-  if (mode === 'earth') return earth(stage, hint, arg && domainByCode(arg) ? arg : pr.domain);
+  if (mode === 'earth') return earth(stage, hint, arg && (domainByCode(arg) || arg === 'ALL') ? arg : pr.domain);
+  if (mode === 'people') return peopleMap(stage, hint);
   if (mode === 'article') return articles(stage, hint, arg);
   return universe(stage, hint);
 }
@@ -112,9 +114,9 @@ async function universe(stage, hint) {
 
 // ---------------- Earth ----------------
 async function earth(stage, hint, code) {
-  const d = domainByCode(code);
+  const d = code === 'ALL' ? ['ALL', 'All fields'] : domainByCode(code);
   let country = store.get('mapCountry', '');
-  const sel = h('select', { 'aria-label': 'Domain' }, ...DOMAINS.map(([c, l]) => h('option', { value: c, selected: c === code }, l)));
+  const sel = h('select', { 'aria-label': 'Domain' }, h('option', { value: 'ALL', selected: code === 'ALL' }, 'All fields'), ...DOMAINS.map(([c, l]) => h('option', { value: c, selected: c === code }, l)));
   sel.addEventListener('change', () => (location.hash = `#map/earth/${sel.value}`));
   const ctry = h('div', { class: 'seg small' }, ...[['', 'World'], ['IN', 'India']].map(([v, l]) => h('button', { type: 'button', class: v === country ? 'on' : '', onclick: () => { store.set('mapCountry', v); mapPage(['earth', code]); } }, l)));
   const find = h('input', { type: 'search', placeholder: 'Find an institution or city on the map', 'aria-label': 'Find on map' });
@@ -237,4 +239,37 @@ async function articles(stage, hint, arg) {
       h('b', {}, 'Institutions'), ...w.places.map(p => h('div', { class: 'maprow col' }, h('b', {}, p.name), h('span', { class: 'meta' }, [p.city, p.country].filter(Boolean).join(', ')))),
       h('b', {}, 'Authors'), h('div', { class: 'chips' }, ...w.authors.map(a => h('span', { class: 'chip' }, a.name))));
   } catch (e) { status.textContent = `Could not map this article: ${e.message}`; }
+}
+
+// ---------- People: where members are, and who you're connected to ----------
+async function peopleMap(stage, hint) {
+  hint.textContent = 'Verified members who shared a location you are allowed to see (rounded to ~5 km). Lines join you to your connections.';
+  const panel = h('aside', { class: 'mappanel glass' });
+  const mapEl = h('div', { class: 'leaf' + (darkTheme() ? ' dark' : '') });
+  const status = h('div', { class: 'mapstatus glass' }, h('span', { class: 'spinner' }), ' Loading members…');
+  stage.replaceChildren(h('div', { class: 'earthgrid' }, h('div', { class: 'leafbox' }, mapEl, status), panel));
+  if (!online()) { status.textContent = 'The People map needs Evidara accounts.'; return; }
+  let L; try { L = await leaflet(); } catch (e) { status.textContent = e.message; return; }
+  const map = L.map(mapEl, { worldCopyJump: true, minZoom: 2, maxZoom: 18 }).setView([22, 79], 3);
+  L.tileLayer('https://tile.openstreetmap.org/{z}/{x}/{y}.png', { maxZoom: 19, attribution: '© <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors' }).addTo(map);
+  setTimeout(() => map.invalidateSize(), 200);
+  const css = getComputedStyle(document.documentElement);
+  const accent = css.getPropertyValue('--accent').trim() || '#E0563F', accent2 = css.getPropertyValue('--accent-2').trim() || '#D174D2', ok = css.getPropertyValue('--ok').trim() || '#7fe0b0';
+  let r;
+  try { r = await api('/map/members'); } catch (e) { status.textContent = e.message; return; }
+  if (!r.signedIn) { status.textContent = 'Sign in to see members on the map.'; panel.replaceChildren(h('p', { class: 'meta' }, 'Members choose who can see their location: all members, only people they accepted, or nobody.')); return; }
+  const me = r.points.find(p => p.me);
+  for (const p of r.points) {
+    const color = p.me ? ok : p.connected ? accent2 : accent;
+    L.circleMarker([p.lat, p.lng], { radius: p.me ? 10 : 8, color: '#fff', weight: 2, fillColor: color, fillOpacity: 0.9 })
+      .bindTooltip(`${esc(p.name)}${p.me ? ' (you)' : p.connected ? ' · connected' : ''} · ${esc([p.city, p.country].filter(Boolean).join(', '))}`)
+      .on('click', () => (location.hash = `#u/${encodeURIComponent(p.id)}`)).addTo(map);
+    if (me && p.connected) L.polyline([[me.lat, me.lng], [p.lat, p.lng]], { color: accent2, weight: 2, opacity: 0.7, dashArray: '6 6' }).addTo(map);
+  }
+  if (r.points.length) map.fitBounds(L.latLngBounds(r.points.map(p => [p.lat, p.lng])).pad(0.4), { maxZoom: 8 });
+  status.textContent = `${r.points.length} member${r.points.length === 1 ? '' : 's'} on the map${me ? '' : ' · add your location in Edit profile'}`;
+  panel.replaceChildren(h('b', {}, 'Members'), h('div', { class: 'meta' }, '● you   ● connected   ● other members'),
+    ...r.points.sort((a, b) => (b.me - a.me) || (b.connected - a.connected)).map(p => h('a', { class: 'maprow', href: `#u/${encodeURIComponent(p.id)}` }, h('span', { class: 'av' }, (p.name || '?').split(/\s+/).map(x => x[0]).slice(0, 2).join('').toUpperCase()),
+      h('span', {}, h('b', {}, p.name), h('span', { class: 'meta' }, ` · ${[p.city, p.country].filter(Boolean).join(', ')}${p.me ? ' · you' : p.connected ? ' · connected' : ''}`)))),
+    me ? null : h('a', { class: 'btn small', href: '#profile/edit' }, 'Add my location'));
 }

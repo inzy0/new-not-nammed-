@@ -279,6 +279,7 @@ export async function renderPost(container, p, { draft = false } = {}) {
     h('div', { class: 'center wide' },
       h('header', { class: 'phead' },
         p.articleId ? h('div', { class: 'potd-tag' }, icon('check', 14), ` Published with Evidara · ${p.articleId}`) : null,
+        p.ev ? h('div', { class: 'evbanner' }, h('span', { class: 'evmark inline' }, 'EV'), ' Verified & liked by Evidara') : null,
         h('div', { class: 'chips' }, h('span', { class: `chip ${draft ? 'warn' : 'ok'}` }, draft ? 'Draft preview' : p.track === 'evidara' ? 'Peer-verified study' : 'Verified community post'), h('span', { class: 'chip' }, p.type), h('span', { class: 'chip' }, domainByCode(p.domain)?.[1] || ''), h('span', { class: 'chip' }, p.decl?.licence || '')),
         h('h1', { class: 'ptitle-xl' }, p.title || 'Untitled'),
         h('div', { class: 'achips' }, ...by.map(a => h('span', { class: 'achip' }, h('span', { class: 'av' }, (a.name || '?').split(/\s+/).map(x => x[0]).slice(0, 2).join('').toUpperCase()), a.name,

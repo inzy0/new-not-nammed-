@@ -21,7 +21,7 @@ export async function people() {
   const members = h('div', { class: 'grid' }), auto = h('div', { class: 'grid' }), autoHead = h('p', { class: 'sub' });
   const q = h('input', { type: 'search', placeholder: 'Search any researcher by name', 'aria-label': 'Researcher name' });
   const idq = h('input', { type: 'text', placeholder: 'Evidara ID, e.g. CARD-7K3QX7', 'aria-label': 'Evidara ID' });
-  const sel = h('select', { 'aria-label': 'Domain' }, ...DOMAINS.map(([c, l]) => h('option', { value: c, selected: c === dom }, `${l} (${c})`)));
+  const sel = h('select', { 'aria-label': 'Domain' }, h('option', { value: 'ALL', selected: dom === 'ALL' }, 'All fields'), ...DOMAINS.map(([c, l]) => h('option', { value: c, selected: c === dom }, `${l} (${c})`)));
   const ctry = h('div', { class: 'seg small' });
   const follows = () => store.get('follows', {});
   const followBtn = (key, name) => {
@@ -37,7 +37,7 @@ export async function people() {
   const drawCtry = () => ctry.replaceChildren(...[['', 'Worldwide'], ['IN', 'India']].map(([v, l]) => h('button', { type: 'button', class: v === country ? 'on' : '', onclick: () => { country = v; store.set('peopleCountry', v); drawCtry(); loadAuto(); } }, l)));
   drawCtry();
   async function loadAuto() {
-    const d = domainByCode(dom);
+    const d = dom === 'ALL' ? ['ALL', 'All fields'] : domainByCode(dom);
     auto.replaceChildren(...Array.from({ length: 6 }, () => h('div', { class: 'card skeleton', style: 'height:150px' })));
     try {
       const r = await domainResearchers(d[1], country);
@@ -61,7 +61,7 @@ export async function people() {
     h('div', { class: 'row', style: 'margin-bottom:18px' }, q, h('button', { class: 'btn ghost', type: 'button', onclick: go }, 'Search'), idq, h('button', { class: 'btn ghost', type: 'button', onclick: () => (location.hash = `#id/${encodeURIComponent(idq.value)}`) }, 'Look up ID')),
     h('h3', { class: 'h3x' }, 'Verified members'), members,
     h('div', { class: 'rhead', style: 'margin-top:30px' }, h('h3', { class: 'h3x' }, 'Researchers in your field'), h('div', { class: 'row' }, sel, ctry)), autoHead, auto));
-  loadMembers().then(ms => members.replaceChildren(...(ms.length ? ms.map(m => h(online() ? 'a' : 'div', { class: 'card person-card', href: online() ? `#member/${encodeURIComponent(m.id)}` : null },
+  loadMembers().then(ms => members.replaceChildren(...(ms.length ? ms.map(m => h(online() ? 'a' : 'div', { class: 'card person-card', href: online() ? `#u/${encodeURIComponent(m.id)}` : null },
     h('div', { class: 'pc-top' }, h('span', { class: 'av lg' }, (m.name || '?').split(/\s+/).map(p => p[0]).slice(0, 2).join('').toUpperCase()),
       h('div', { class: 'pc-name' }, h('b', {}, m.name), h('div', { class: 'meta' }, [m.role, m.institution].filter(Boolean).join(' · '))), followBtn('m:' + m.id, m.name)),
     h('div', { class: 'chips' }, h('span', { class: 'chip ok' }, 'Verified'), h('span', { class: 'idbadge sm' }, m.id), m.orcid ? h('a', { class: 'chip', href: `https://orcid.org/${m.orcid}`, target: '_blank', rel: 'noopener noreferrer' }, 'ORCID') : null),

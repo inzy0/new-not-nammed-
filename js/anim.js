@@ -28,16 +28,70 @@ export function startReveal() {
 }
 
 // Moving background: soft blobs that drift, plus a slow parallax with the pointer.
+// ---------- living background ----------
+// Styles: aurora (flowing ribbons), orbs (drifting colour fields), particles (constellation that reacts to the cursor),
+// mesh (slow gradient wave). A soft glow follows the pointer. Settings live in Theme → Effects.
+const FX_DEFAULT = { style: 'aurora', motion: 'full', glow: true, intensity: 1 };
+export function fxSettings() { try { return { ...FX_DEFAULT, ...JSON.parse(localStorage.getItem('evd:fx') || '{}') }; } catch { return { ...FX_DEFAULT }; } }
+export function setFx(patch) { const v = { ...fxSettings(), ...patch }; try { localStorage.setItem('evd:fx', JSON.stringify(v)); } catch {} applyFx(v); return v; }
+let bgEl = null, glowEl = null, canvas = null, particlesOn = false;
+function applyFx(v = fxSettings()) {
+  const root = document.documentElement;
+  const motion = reduced() ? 'off' : v.motion;
+  root.dataset.fxStyle = v.style; root.dataset.fxMotion = motion; root.dataset.fxGlow = v.glow && motion !== 'off' ? 'on' : 'off';
+  root.style.setProperty('--fx-int', String(Math.max(0.3, Math.min(1.6, Number(v.intensity) || 1))));
+  root.style.setProperty('--fx-speed', motion === 'calm' ? '2.4' : '1');
+  particlesOn = v.style === 'particles' && motion !== 'off';
+  if (particlesOn) startParticles();
+}
 export function startBackground() {
-  const bg = document.createElement('div'); bg.className = 'bgfx'; bg.setAttribute('aria-hidden', 'true');
-  bg.innerHTML = '<i class="b1"></i><i class="b2"></i><i class="b3"></i><i class="b4"></i><span class="grain"></span>';
-  document.body.prepend(bg);
-  if (reduced()) return;
-  let raf = 0;
-  window.addEventListener('pointermove', e => {
-    if (raf) return;
-    raf = requestAnimationFrame(() => { raf = 0; const x = (e.clientX / innerWidth - 0.5) * 30, y = (e.clientY / innerHeight - 0.5) * 30; bg.style.setProperty('--px', `${x}px`); bg.style.setProperty('--py', `${y}px`); });
-  }, { passive: true });
+  bgEl = document.createElement('div'); bgEl.className = 'bgfx'; bgEl.setAttribute('aria-hidden', 'true');
+  bgEl.innerHTML = '<i class="b1"></i><i class="b2"></i><i class="b3"></i><i class="b4"></i><b class="r1"></b><b class="r2"></b><b class="r3"></b><u class="mesh"></u>';
+  canvas = document.createElement('canvas'); canvas.className = 'fxparticles'; canvas.setAttribute('aria-hidden', 'true');
+  glowEl = document.createElement('div'); glowEl.className = 'cursorglow'; glowEl.setAttribute('aria-hidden', 'true');
+  document.body.prepend(glowEl); document.body.prepend(canvas); document.body.prepend(bgEl);
+  applyFx();
+  // pointer: parallax + glow, eased toward the pointer every frame
+  let tx = innerWidth / 2, ty = innerHeight / 3, gx = tx, gy = ty, run = false;
+  const loop = () => {
+    gx += (tx - gx) * 0.12; gy += (ty - gy) * 0.12;
+    glowEl.style.transform = `translate(${gx}px, ${gy}px)`;
+    bgEl.style.setProperty('--px', `${(gx / innerWidth - 0.5) * 34}px`); bgEl.style.setProperty('--py', `${(gy / innerHeight - 0.5) * 34}px`);
+    pointer.x = gx; pointer.y = gy;
+    if (Math.abs(tx - gx) + Math.abs(ty - gy) > 0.5) requestAnimationFrame(loop); else run = false;
+  };
+  addEventListener('pointermove', e => { tx = e.clientX; ty = e.clientY; if (!run) { run = true; requestAnimationFrame(loop); } }, { passive: true });
+}
+const pointer = { x: -999, y: -999 };
+function startParticles() {
+  if (!canvas || canvas._running) return;
+  canvas._running = true;
+  const ctx = canvas.getContext('2d'); let W, H, pts;
+  const size = () => { W = canvas.width = innerWidth * devicePixelRatio; H = canvas.height = innerHeight * devicePixelRatio; canvas.style.width = innerWidth + 'px'; canvas.style.height = innerHeight + 'px';
+    const n = Math.min(110, Math.round(innerWidth * innerHeight / 16000)); pts = Array.from({ length: n }, () => ({ x: Math.random() * W, y: Math.random() * H, vx: (Math.random() - 0.5) * 0.35, vy: (Math.random() - 0.5) * 0.35, r: 1 + Math.random() * 1.8 })); };
+  size(); addEventListener('resize', size, { passive: true });
+  const tick = () => {
+    if (!particlesOn || document.hidden) { canvas._running = false; ctx.clearRect(0, 0, W, H); return; }
+    const css = getComputedStyle(document.documentElement); const a1 = css.getPropertyValue('--accent').trim() || '#E0563F', a2 = css.getPropertyValue('--accent-2').trim() || '#D174D2';
+    const calm = document.documentElement.dataset.fxMotion === 'calm' ? 0.4 : 1, dpr = devicePixelRatio, mx = pointer.x * dpr, my = pointer.y * dpr;
+    ctx.clearRect(0, 0, W, H);
+    for (const p of pts) {
+      const dx = p.x - mx, dy = p.y - my, d2 = dx * dx + dy * dy;
+      if (d2 < (140 * dpr) ** 2) { const f = 0.6 / Math.max(30, Math.sqrt(d2)); p.vx += dx * f * 0.05; p.vy += dy * f * 0.05; }
+      p.vx *= 0.985; p.vy *= 0.985; p.x += p.vx * calm * dpr + 0.05; p.y += p.vy * calm * dpr;
+      if (p.x < 0) p.x += W; if (p.x > W) p.x -= W; if (p.y < 0) p.y += H; if (p.y > H) p.y -= H;
+    }
+    ctx.lineWidth = dpr * 0.7;
+    for (let i = 0; i < pts.length; i++) for (let j = i + 1; j < pts.length; j++) {
+      const a = pts[i], b = pts[j], dx = a.x - b.x, dy = a.y - b.y, d = dx * dx + dy * dy, lim = (120 * dpr) ** 2;
+      if (d < lim) { ctx.globalAlpha = (1 - d / lim) * 0.35; ctx.strokeStyle = a2; ctx.beginPath(); ctx.moveTo(a.x, a.y); ctx.lineTo(b.x, b.y); ctx.stroke(); }
+    }
+    for (const p of pts) { const near = Math.hypot(p.x - mx, p.y - my) < 160 * dpr; ctx.globalAlpha = near ? 0.95 : 0.6; ctx.fillStyle = near ? a1 : a2; ctx.beginPath(); ctx.arc(p.x, p.y, p.r * dpr * (near ? 1.8 : 1), 0, 7); ctx.fill(); }
+    ctx.globalAlpha = 1;
+    requestAnimationFrame(tick);
+  };
+  requestAnimationFrame(tick);
+  document.addEventListener('visibilitychange', () => { if (!document.hidden && particlesOn && !canvas._running) startParticles(); });
 }
 
 // 3D tilt + glare on cards (mouse/pen only; touch devices keep a flat, calm UI).

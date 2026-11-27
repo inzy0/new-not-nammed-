@@ -14,6 +14,8 @@ import { mapPage } from './map.js';
 import { publishWithUs, about, onboarding } from './about.js';
 import { loadMe, mountAccount, onAuth } from './backend.js';
 import { messages, memberPage, startUnreadBadge } from './chat.js';
+import { dashboard, postRoute, editProfileCards } from './profiledash.js';
+import { user, online } from './backend.js';
 import { syncLibrary } from './library.js';
 
 const view = document.getElementById('view');
@@ -25,14 +27,20 @@ document.getElementById('snav').append(...NAV.map(([r, label, ic]) =>
   h('a', { class: 'snav-item', href: `#${r}`, dataset: { nav: r } }, h('span', { class: 'ico' }, icon(ic, 22)), h('span', { class: 'lbl' }, label))));
 document.getElementById('themeIco').append(icon('theme', 22));
 
-const routes = { feed: explore, home: explore, paper, reels, podcasts, people, researcher, studio, library, profile: profilePage, id: idLookup, publish, post: postPage, admin, map: mapPage, 'publish-with-us': publishWithUs, about, messages, member: memberPage };
-const parent = { paper: 'feed', researcher: 'people', id: 'people', home: 'feed', post: 'feed', admin: 'profile', publish: 'publish-with-us', member: 'people' };
+const routes = { feed: explore, home: explore, paper, reels, podcasts, people, researcher, studio, library, id: idLookup, publish, post: postPage, admin, map: mapPage, 'publish-with-us': publishWithUs, about, messages, member: memberPage, u: ([id]) => dashboard(id), mp: postRoute,
+  profile: async ([sub]) => {
+    const me = user();
+    if (online() && me?.profile?.member_id && sub !== 'edit' && sub !== 'settings') return dashboard(me.profile.member_id);
+    profilePage();
+    if (online() && me) { const cards = await editProfileCards(); const sec = document.querySelector('#view .section'); if (sec) sec.prepend(...cards); }
+  } };
+const parent = { paper: 'feed', researcher: 'people', id: 'people', home: 'feed', post: 'feed', admin: 'profile', publish: 'publish-with-us', member: 'people', u: 'people', mp: 'feed' };
 let first = true;
 
 function route() {
   const [name, ...rest] = (location.hash.slice(1) || 'feed').split('/');
   const fn = routes[name] || explore;
-  const navKey = parent[name] || name;
+  const navKey = name === 'u' && rest[0] && rest[0] === user()?.profile?.member_id ? 'profile' : (parent[name] || name);
   const run = () => {
     document.querySelectorAll('[data-nav]').forEach(a => a.classList.toggle('on', a.dataset.nav === navKey));
     document.body.dataset.route = name in routes ? name : 'feed';
@@ -50,7 +58,7 @@ mountAccount(document.getElementById('acct'));
 startUnreadBadge();
 loadMe().then(u => { if (u) syncLibrary(); });
 let lastUid = null;
-onAuth(u => { const id = u?.id || null; if (id !== lastUid) { lastUid = id; if (u) syncLibrary(); const r = location.hash.split('/')[0]; if (['#profile', '#admin', '#publish', '#messages', '#member'].includes(r)) route(); } });
+onAuth(u => { const id = u?.id || null; if (id !== lastUid) { lastUid = id; if (u) syncLibrary(); const r = location.hash.split('/')[0]; if (['#profile', '#admin', '#publish', '#messages', '#member', '#u'].includes(r)) route(); } });
 startBackground();
 startReveal();
 startTilt();

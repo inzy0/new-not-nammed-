@@ -3,6 +3,7 @@ import { h, store } from './util.js';
 import { domainByCode } from './ids.js';
 import * as P from './prompts.js';
 import * as Lib from './library.js';
+import { fxSettings, setFx } from './anim.js';
 
 // ---------------- themes ----------------
 export const THEMES = [
@@ -20,9 +21,18 @@ const panel = document.getElementById('themesPanel');
 document.getElementById('themeBtn').addEventListener('click', () => {
   panel.hidden = !panel.hidden;
   if (!panel.hidden) {
+    const fx = fxSettings();
+    const seg = (label, key, opts) => h('div', { class: 'fxrow' }, h('span', { class: 'meta' }, label), h('div', { class: 'seg small' }, ...opts.map(([v, l]) => h('button', { type: 'button', class: String(fx[key]) === String(v) ? 'on' : '', onclick: e => { setFx({ [key]: v }); fx[key] = v; e.currentTarget.parentElement.querySelectorAll('button').forEach(b => b.classList.toggle('on', b === e.currentTarget)); } }, l))));
+    const inten = h('input', { type: 'range', min: '0.4', max: '1.6', step: '0.1', value: String(fx.intensity), 'aria-label': 'Colour intensity' });
+    inten.addEventListener('input', () => setFx({ intensity: Number(inten.value) }));
     panel.replaceChildren(h('div', { class: 'meta', style: 'margin-bottom:10px' }, 'Theme templates'),
-      ...THEMES.map(([id, name, desc, sw]) => h('button', { class: 'theme-opt', type: 'button', onclick: () => { applyTheme(id); panel.hidden = true; } },
-        h('span', { class: 'sw', style: `background:${sw}` }), h('span', {}, h('b', {}, name), h('small', {}, desc)))));
+      ...THEMES.map(([id, name, desc, sw]) => h('button', { class: 'theme-opt', type: 'button', onclick: () => { applyTheme(id); } },
+        h('span', { class: 'sw', style: `background:${sw}` }), h('span', {}, h('b', {}, name), h('small', {}, desc)))),
+      h('div', { class: 'meta', style: 'margin:14px 0 8px' }, 'Effects'),
+      seg('Background', 'style', [['aurora', 'Aurora'], ['orbs', 'Orbs'], ['particles', 'Particles'], ['mesh', 'Mesh']]),
+      seg('Motion', 'motion', [['full', 'Full'], ['calm', 'Calm'], ['off', 'Off']]),
+      seg('Cursor glow', 'glow', [[true, 'On'], [false, 'Off']]),
+      h('div', { class: 'fxrow' }, h('span', { class: 'meta' }, 'Colour intensity'), inten));
   }
 });
 document.addEventListener('click', e => { if (!panel.hidden && !panel.contains(e.target) && !e.target.closest('#themeBtn')) panel.hidden = true; });

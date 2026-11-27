@@ -204,7 +204,7 @@ async function adminOnline() {
     drawTabs(); draw();
   };
   let reports = [];
-  const drawTabs = () => tabs.replaceChildren(...[['verif', `Verifications (${q.verifications.length})`], ['posts', `Submissions (${q.posts.length})`], ['reports', `Reports (${reports.length})`], ['live', 'Published']].map(([k, l]) =>
+  const drawTabs = () => tabs.replaceChildren(...[['verif', `Verifications (${q.verifications.length})`], ['posts', `Submissions (${q.posts.length})`], ['members', 'Members'], ['mposts', 'Member posts'], ['reports', `Reports (${reports.length})`], ['live', 'Published']].map(([k, l]) =>
     h('button', { type: 'button', class: k === tab ? 'on' : '', onclick: () => { tab = k; store.set('adminTab2', k); drawTabs(); draw(); } }, l)));
   const docLink = d => {
     const a = h('button', { class: 'btn small ghost', type: 'button', onclick: async () => {
@@ -239,6 +239,28 @@ async function adminOnline() {
             h('button', { class: 'btn', type: 'button', disabled: v.blockers > 0, onclick: () => act('/admin/posts/' + pq.id, 'approve') }, 'Approve & publish'), note,
             h('button', { class: 'btn ghost', type: 'button', onclick: () => act('/admin/posts/' + pq.id, 'reject', note.value) }, 'Reject')), prev);
       }) : [h('div', { class: 'empty' }, 'No submissions waiting.')]));
+    } else if (tab === 'members') {
+      const ms = (await api('/admin/members')).members || [];
+      const hist = h('div', {});
+      body.replaceChildren(h('div', { class: 'card' }, h('h3', {}, `All members (${ms.length})`), h('p', { class: 'meta' }, 'Newest profile changes first. Open a member to see every change they made.'),
+        h('div', { class: 'mtable' }, ...ms.map(m => h('div', { class: 'mrow' },
+          h('span', { class: 'av' }, (m.name || m.uname || m.email).split(/[\s@]+/).map(x => x[0]).slice(0, 2).join('').toUpperCase()),
+          h('span', {}, m.member_id ? h('a', { href: `#u/${encodeURIComponent(m.member_id)}` }, h('b', {}, m.name || m.uname || m.email)) : h('b', {}, m.name || m.uname || m.email), h('div', { class: 'meta' }, `${m.email} · ${m.member_id || 'no ID yet'} · ${m.role_title || ''}`)),
+          h('span', { class: 'chips' }, m.role === 'admin' ? h('span', { class: 'chip ok' }, 'Admin') : null, m.verified ? h('span', { class: 'chip ok' }, 'Verified') : h('span', { class: 'chip warn' }, 'Not verified'), h('span', { class: 'chip' }, `${m.posts} posts`)),
+          h('span', { class: 'meta' }, m.last_change ? `Changed ${new Date(m.last_change).toLocaleString()} (${m.changes})` : `Joined ${new Date(m.created_at).toLocaleDateString()}`),
+          h('button', { class: 'btn small ghost', type: 'button', onclick: async () => {
+            const hs = (await api('/admin/history?user=' + encodeURIComponent(m.id))).history || [];
+            hist.replaceChildren(h('div', { class: 'card' }, h('h3', {}, `Changes by ${m.name || m.email}`), ...(hs.length ? hs.map(x => h('div', { class: 'vrow' }, h('div', { class: 'meta' }, new Date(x.at).toLocaleString()),
+              ...Object.entries(x.changes).map(([k, v]) => h('div', { class: 'chg' }, h('b', {}, k), ': ', h('span', { class: 'from' }, String(typeof v.from === 'string' ? v.from : JSON.stringify(v.from) ?? '—').slice(0, 300)), ' → ', h('span', { class: 'to' }, String(typeof v.to === 'string' ? v.to : JSON.stringify(v.to) ?? '—').slice(0, 300)))))) : [h('div', { class: 'meta' }, 'No changes recorded.')])));
+            hist.scrollIntoView({ behavior: 'smooth' });
+          } }, 'History'))))), hist);
+    } else if (tab === 'mposts') {
+      const ps = (await api('/admin/mposts')).posts || [];
+      const { openPost } = await import('./profiledash.js');
+      body.replaceChildren(h('div', { class: 'card' }, h('h3', {}, `Member posts (${ps.length})`), h('p', { class: 'meta' }, 'Give an EV star to posts Evidara verifies and likes. It shows as an EV mark on the post and the member\'s profile.'),
+        ...ps.map(x => { const star = h('button', { class: 'btn small' + (x.ev ? '' : ' ghost'), type: 'button', onclick: async () => { try { const r = await api('/admin/ev', { method: 'POST', body: { target: 'mp:' + x.id, on: !x.ev } }); x.ev = r.on; star.classList.toggle('ghost', !r.on); star.textContent = r.on ? '★ EV starred' : '☆ Give EV star'; } catch (e) { toast(e.message); } } }, x.ev ? '★ EV starred' : '☆ Give EV star');
+          return h('div', { class: 'vrow mprow' }, h('div', { class: 'row' }, h('b', {}, x.author?.name || x.email), h('span', { class: 'chip' }, x.kind), x.deleted ? h('span', { class: 'chip bad' }, 'deleted') : null, h('span', { class: 'meta' }, new Date(x.at).toLocaleString())),
+            h('div', {}, (x.caption || '').slice(0, 240)), h('div', { class: 'row' }, h('button', { class: 'btn small ghost', type: 'button', onclick: () => openPost(x.id) }, 'Open'), x.deleted ? null : star)); })));
     } else if (tab === 'reports') {
       body.replaceChildren(h('p', { class: 'note' }, 'You only see a private conversation when a member reports it.'),
         ...(reports.length ? reports.map(rp => h('div', { class: 'card' }, h('div', { class: 'rhead' }, h('h3', {}, rp.people.join(' ↔ ')), h('span', { class: 'chip warn' }, 'Reported')),
@@ -248,7 +270,8 @@ async function adminOnline() {
           : [h('div', { class: 'empty' }, 'No open reports.')]));
     } else {
       const ps = (await api('/posts?limit=100')).posts || [];
-      body.replaceChildren(h('div', { class: 'card' }, h('h3', {}, `Published (${ps.length})`), ...ps.map(p => h('div', { class: 'vrow' }, h('a', { href: `#post/${encodeURIComponent(p.id)}` }, p.title), h('div', { class: 'meta' }, `${p.articleId || 'Community'} · ${new Date(p.publishedAt).toLocaleDateString()}`)))));
+      body.replaceChildren(h('div', { class: 'card' }, h('h3', {}, `Published (${ps.length})`), ...ps.map(p => { const star = h('button', { class: 'btn small' + (p.ev ? '' : ' ghost'), type: 'button', onclick: async () => { try { const r = await api('/admin/ev', { method: 'POST', body: { target: 'post:' + p.id, on: !p.ev } }); p.ev = r.on; star.classList.toggle('ghost', !r.on); star.textContent = r.on ? '★ EV starred' : '☆ Give EV star'; } catch (e) { toast(e.message); } } }, p.ev ? '★ EV starred' : '☆ Give EV star');
+        return h('div', { class: 'vrow' }, h('a', { href: `#post/${encodeURIComponent(p.id)}` }, p.title), h('div', { class: 'row' }, h('span', { class: 'meta' }, `${p.articleId || 'Community'} · ${new Date(p.publishedAt).toLocaleDateString()}`), star)); })));
     }
   }
   view.replaceChildren(h('section', { class: 'section wide' },

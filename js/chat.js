@@ -2,7 +2,10 @@
 import { h, toast } from './util.js';
 import { icon } from './icons.js';
 import { domainByCode } from './ids.js';
-import { online, user, api, openSignIn, onAuth } from './backend.js';
+import { online, user, api, openSignIn, onAuth, token } from './backend.js';
+import { linkify } from './profiledash.js';
+import { driveReady, uploadToDrive, driveImage, driveOpen } from './gdrive.js';
+import { CONFIG } from './config.js';
 
 const view = document.getElementById('view');
 const initials = n => String(n || '?').split(/[\s@]+/).map(x => x[0]).slice(0, 2).join('').toUpperCase();
@@ -69,7 +72,7 @@ export async function messages([withId]) {
       if (!list.length) return;
       if (!lastAt) msgs.replaceChildren();
       for (const x of list) {
-        msgs.append(h('div', { class: 'msg' + (x.mine ? ' mine' : '') }, h('div', { class: 'mtext' }, x.text),
+        msgs.append(h('div', { class: 'msg' + (x.mine ? ' mine' : '') }, x.text ? h('div', { class: 'mtext' }, linkify(x.text)) : null, ...(x.attachments || []).map(attEl),
           h('div', { class: 'mmeta' }, new Date(x.at).toLocaleString([], { dateStyle: 'short', timeStyle: 'short' }), x.mine ? (x.read ? ' · Seen' : ' · Sent') : '',
             x.mine ? h('button', { class: 'linkbtn', type: 'button', onclick: async e => { try { await api('/messages/' + x.id, { method: 'DELETE' }); e.target.closest('.msg').remove(); } catch (er) { toast(er.message); } } }, ' Delete') : null)));
         lastAt = x.at;
@@ -77,10 +80,25 @@ export async function messages([withId]) {
       msgs.scrollTop = msgs.scrollHeight;
     };
     const pull = async () => { try { const r = await api(`/chats/${encodeURIComponent(id)}?after=${encodeURIComponent(lastAt)}`); add(r.messages); } catch { /* not open yet */ } };
+    const pending = [];
+    const pendBox = h('div', { class: 'pend' });
+    const drawPend = () => pendBox.replaceChildren(...pending.map((a, i) => h('span', { class: 'chip pick on' }, a.kind === 'image' ? '🖼 ' : a.kind === 'drive' ? '☁ ' : '📎 ', a.name, h('button', { class: 'linkbtn', type: 'button', 'aria-label': 'Remove', onclick: () => { pending.splice(i, 1); drawPend(); } }, ' ×'))));
+    const fileIn = h('input', { type: 'file', multiple: true, hidden: true, accept: 'image/*,application/pdf,.doc,.docx,.ppt,.pptx,.xls,.xlsx,.txt,.csv', onchange: async () => {
+      for (const f of fileIn.files) {
+        try {
+          if (f.type.startsWith('image/')) pending.push({ kind: 'image', name: f.name, dataUrl: await shrink(f) });
+          else if (f.size <= 1.8e6) pending.push({ kind: 'file', name: f.name, dataUrl: await asDataUrl(f) });
+          else if (driveReady()) { toast(`Uploading ${f.name} to your Google Drive…`); const r = await uploadToDrive(f); pending.push({ kind: 'drive', name: r.name, id: r.id, mime: r.mime }); }
+          else toast(`${f.name} is over 1.8 MB`);
+        } catch (e) { toast(e.message); }
+      }
+      fileIn.value = ''; drawPend();
+    } });
     const send = async () => {
-      const text = ta.value.trim(); if (!text) return;
+      const text = ta.value.trim(); if (!text && !pending.length) return;
       if (PATIENT.some(re => re.test(text))) { toast('Looks like patient details (ID, phone, date of birth). Remove them before sending.'); return; }
-      try { await api('/chats/' + encodeURIComponent(id), { method: 'POST', body: { text } }); ta.value = ''; await pull(); loadLists(); } catch (e) { toast(e.message); }
+      const links = (text.match(/https?:\/\/[^\s<>"]+/g) || []).slice(0, 3).map(url => ({ kind: 'link', url }));
+      try { await api('/chats/' + encodeURIComponent(id), { method: 'POST', body: { text, attachments: [...pending, ...links] } }); ta.value = ''; pending.length = 0; drawPend(); await pull(); loadLists(); } catch (e) { toast(e.message); }
     };
     ta.addEventListener('keydown', e => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); send(); } });
     threadBox.replaceChildren(
@@ -91,7 +109,8 @@ export async function messages([withId]) {
           rel.connId && !m.admin ? h('button', { class: 'btn small ghost', type: 'button', onclick: async () => { if (!confirm(`Block ${m.name}? They will not be able to message you.`)) return; try { await api(`/connections/${rel.connId}/block`, { method: 'POST' }); toast('Blocked'); openThread(id); } catch (e) { toast(e.message); } } }, 'Block') : null)),
       ...(rel.canMessage ? [] : [h('div', { class: 'note' }, relText(rel, m))]),
       msgs,
-      h('div', { class: 'composer chatcomposer' }, ta, h('button', { class: 'btn', type: 'button', disabled: !rel.canMessage, onclick: send }, 'Send')));
+      pendBox,
+      h('div', { class: 'composer chatcomposer' }, h('button', { class: 'iconbtn', type: 'button', 'aria-label': 'Attach images or files', title: 'Attach images, PDFs, documents (large files go to your Google Drive)', disabled: !rel.canMessage, onclick: () => fileIn.click() }, '📎'), fileIn, ta, h('button', { class: 'btn', type: 'button', disabled: !rel.canMessage, onclick: send }, 'Send')));
     msgs.replaceChildren(h('div', { class: 'meta', style: 'text-align:center;padding:20px' }, rel.canMessage ? 'Say hello. Messages are private between you two.' : ''));
     await pull(); startUnreadBadge();
     pollT = setInterval(() => { if (!document.body.contains(msgs)) { clearInterval(pollT); return; } pull(); }, 5000);
@@ -167,4 +186,26 @@ export function privacyCard() {
       } }, 'Save privacy'), h('span', { class: 'meta' }, 'The Evidara admin can always message you and see your contact details.')));
   })();
   return box;
+}
+
+// ---------- attachment helpers ----------
+async function shrink(file) {
+  const url = URL.createObjectURL(file);
+  try {
+    const img = await new Promise((res, rej) => { const i = new Image(); i.onload = () => res(i); i.onerror = rej; i.src = url; });
+    const k = Math.min(1, 1600 / Math.max(img.width, img.height));
+    const c = document.createElement('canvas'); c.width = Math.round(img.width * k); c.height = Math.round(img.height * k);
+    c.getContext('2d').drawImage(img, 0, 0, c.width, c.height);
+    return c.toDataURL('image/webp', 0.82);
+  } finally { URL.revokeObjectURL(url); }
+}
+const asDataUrl = f => new Promise((res, rej) => { const r = new FileReader(); r.onload = () => res(r.result); r.onerror = rej; r.readAsDataURL(f); });
+// Private attachments need the session token, so they are fetched and shown as blob URLs.
+async function authBlob(url) { const r = await fetch(url, { headers: { Authorization: 'Bearer ' + token() } }); if (!r.ok) throw new Error('Attachment unavailable'); return URL.createObjectURL(await r.blob()); }
+function attEl(a) {
+  if (a.kind === 'link') return h('a', { class: 'attlink', href: a.url, target: '_blank', rel: 'noopener noreferrer nofollow' }, '🔗 ', a.name.replace(/^https?:\/\//, '').slice(0, 60));
+  if (a.kind === 'drive') return /^image\//.test(a.mime) ? h('a', { href: driveOpen(a.id), target: '_blank', rel: 'noopener noreferrer' }, h('img', { class: 'attimg', src: driveImage(a.id, 800), alt: a.name, referrerpolicy: 'no-referrer' }))
+    : h('a', { class: 'attfile', href: driveOpen(a.id), target: '_blank', rel: 'noopener noreferrer' }, '☁ ', a.name, ' (Google Drive) ↗');
+  if (a.kind === 'image') { const img = h('img', { class: 'attimg', alt: a.name || 'image' }); authBlob(a.url).then(u => (img.src = u)).catch(() => img.replaceWith(h('span', { class: 'meta' }, 'Image unavailable'))); return img; }
+  return h('button', { class: 'attfile', type: 'button', onclick: async () => { try { window.open(await authBlob(a.url), '_blank', 'noopener'); } catch (e) { toast(e.message); } } }, '📎 ', a.name || 'file');
 }

@@ -92,6 +92,41 @@ async function route(req, env, url, u) {
   const pubBase = (env.PUBLIC_URL || url.origin).replace(/\/$/, '');
   const body = async (max = 2e6) => { const t = await req.text(); if (t.length > max) fail(413, 'Request too large'); try { return JSON.parse(t || '{}'); } catch { fail(400, 'Bad JSON'); } };
   const seg = p.split('/').filter(Boolean).map(decodeURIComponent);
+  const YT = s => (String(s).match(/(?:youtube\.com\/(?:watch\?v=|shorts\/|embed\/)|youtu\.be\/)([\w-]{11})/) || [])[1];
+  const DRIVE_ID = /^[\w-]{10,120}$/;
+  async function normMedia(items, keyBase) {
+    const out = [];
+    for (const [i, m] of (Array.isArray(items) ? items : []).slice(0, 10).entries()) {
+      if (m.type === 'image' && m.dataUrl) out.push({ type: 'image', src: `${pubBase}/files/${await putDataUrl(env, `${keyBase}/${i}-${uid().slice(0, 6)}`, m.dataUrl, 1.9e6)}`, alt: clip(m.alt, 300) });
+      else if (m.type === 'drive' && DRIVE_ID.test(m.id || '')) out.push({ type: 'drive', id: m.id, mime: clip(m.mime, 80), name: clip(m.name, 160) });
+      else if (m.type === 'youtube' && YT(m.url)) out.push({ type: 'youtube', id: YT(m.url) });
+      else if (m.type === 'image' && /^https:\/\//.test(m.src || '') && m.src.startsWith(pubBase)) out.push({ type: 'image', src: m.src, alt: clip(m.alt, 300) });
+    }
+    return out;
+  }
+  function normMusic(m) {
+    const u = String(m?.url || '').trim(); if (!u) return null;
+    const sp = u.match(/open\.spotify\.com\/(track|episode|show|album|playlist)\/([A-Za-z0-9]+)/);
+    if (sp) return { provider: 'spotify', kind: sp[1], id: sp[2], url: u, title: clip(m.title, 120) };
+    if (YT(u)) return { provider: 'youtube', id: YT(u), url: u, title: clip(m.title, 120) };
+    if (/^https:\/\/soundcloud\.com\/[\w-]+\/[\w-]+/.test(u)) return { provider: 'soundcloud', url: clip(u, 300), title: clip(m.title, 120) };
+    fail(400, 'Music link must be Spotify, YouTube or SoundCloud');
+  }
+  const evSet = async targets => {
+    if (!targets.length) return new Set();
+    const ph = targets.map((_, i) => `?${i + 1}`).join(',');
+    return new Set((await env.DB.prepare(`SELECT target FROM ev_marks WHERE target IN (${ph})`).bind(...targets).all()).results.map(r => r.target));
+  };
+  const postOut = (r, ev) => ({ id: r.id, kind: r.kind, caption: r.caption, media: JSON.parse(r.media || '[]'), paperKey: r.paper_key, paperTitle: r.paper_title, rating: r.rating,
+    music: r.music ? JSON.parse(r.music) : null, tags: r.tags ? JSON.parse(r.tags) : [], at: r.created_at, ev: ev.has('mp:' + r.id),
+    author: r.member_id ? { id: r.member_id, name: r.pname || r.uname, avatar: r.avatar || null, verified: !!r.verified } : undefined });
+  const POST_COLS = `m.*, p.member_id, p.name AS pname, u.name AS uname, p.verified, x.avatar`;
+  const POST_JOIN = `FROM mposts m JOIN users u ON u.id = m.user_id LEFT JOIN profiles p ON p.user_id = m.user_id LEFT JOIN profile_ext x ON x.user_id = m.user_id`;
+  async function logHistory(userId, before, after) {
+    const changes = {};
+    for (const k of Object.keys(after)) { const a = before?.[k] ?? null, b = after[k] ?? null; if (JSON.stringify(a) !== JSON.stringify(b)) changes[k] = { from: a, to: b }; }
+    if (Object.keys(changes).length) await env.DB.prepare('INSERT INTO profile_history (id, user_id, changes, at) VALUES (?1, ?2, ?3, ?4)').bind(uid(), userId, JSON.stringify(changes), now()).run();
+  }
 
   if (p === '/health') return { ok: true, time: now(), ai: !!env.AI || env.MOCK_AI === '1', google: !!env.GOOGLE_CLIENT_ID, files: env.FILES ? 'r2' : 'd1', videos: !!env.FILES };
 
@@ -125,6 +160,8 @@ async function route(req, env, url, u) {
       if (cur?.verified && memberId) fail(400, 'Verified members keep their ID. Ask the admin to change your domain.');
       for (let i = 0; i < 8; i++) { const cand = newMemberId(domain); const clash = await env.DB.prepare('SELECT 1 FROM profiles WHERE member_id = ?1').bind(cand).first(); if (!clash) { memberId = cand; break; } }
     }
+    await logHistory(u.id, cur ? { domain: cur.domain, name: cur.name, role_title: cur.role_title, institution: cur.institution, orcid: cur.orcid, bio: cur.bio } : null,
+      { domain, name: clip(b.name, 120), role_title: clip(b.role_title, 120), institution: clip(b.institution, 200), orcid: clip(b.orcid, 19), bio: clip(b.bio, 1000) });
     await env.DB.prepare(`INSERT INTO profiles (user_id, member_id, domain, name, role_title, institution, orcid, bio, audience, tone, updated_at) VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11)
       ON CONFLICT(user_id) DO UPDATE SET member_id=?2, domain=?3, name=?4, role_title=?5, institution=?6, orcid=?7, bio=?8, audience=?9, tone=?10, updated_at=?11`)
       .bind(u.id, memberId, domain, clip(b.name, 120), clip(b.role_title, 120), clip(b.institution, 200), clip(b.orcid, 19), clip(b.bio, 1000), clip(b.audience, 40), clip(b.tone, 40), now()).run();
@@ -157,14 +194,15 @@ async function route(req, env, url, u) {
   // posts
   if (p === '/posts' && M === 'GET') {
     const d = url.searchParams.get('domain'); const lim = Math.min(100, Number(url.searchParams.get('limit') || 50));
-    const rows = (await env.DB.prepare(`SELECT data, article_id, published_at FROM posts WHERE status = 'published' ${d ? 'AND domain = ?2' : ''} ORDER BY published_at DESC LIMIT ?1`).bind(lim, ...(d ? [d] : [])).all()).results;
-    return { posts: rows.map(r => ({ ...JSON.parse(r.data), articleId: r.article_id || undefined, publishedAt: r.published_at, status: 'published' })) };
+    const rows = (await env.DB.prepare(`SELECT p.data, p.article_id, p.published_at, e.target AS ev FROM posts p LEFT JOIN ev_marks e ON e.target = 'post:' || p.id WHERE p.status = 'published' ${d ? 'AND p.domain = ?2' : ''} ORDER BY p.published_at DESC LIMIT ?1`).bind(lim, ...(d ? [d] : [])).all()).results;
+    return { posts: rows.map(r => ({ ...JSON.parse(r.data), articleId: r.article_id || undefined, publishedAt: r.published_at, status: 'published', ev: !!r.ev })) };
   }
   if (p === '/posts/mine' && M === 'GET') { need(u); const rows = (await env.DB.prepare('SELECT id, title, status, note, article_id, created_at, published_at FROM posts WHERE user_id = ?1 ORDER BY created_at DESC').bind(u.id).all()).results; return { posts: rows }; }
   if (seg[0] === 'posts' && seg[1] && M === 'GET') {
     const r = await env.DB.prepare('SELECT * FROM posts WHERE id = ?1').bind(seg[1]).first();
     if (!r || (r.status !== 'published' && !(u && (u.admin || u.id === r.user_id)))) fail(404, 'Post not found');
-    return { post: { ...JSON.parse(r.data), articleId: r.article_id || undefined, publishedAt: r.published_at, status: r.status, note: r.note } };
+    const evm = await env.DB.prepare('SELECT 1 FROM ev_marks WHERE target = ?1').bind('post:' + r.id).first();
+    return { post: { ...JSON.parse(r.data), articleId: r.article_id || undefined, publishedAt: r.published_at, status: r.status, note: r.note, ev: !!evm } };
   }
   if (p === '/posts' && M === 'POST') {
     need(u, 'verified');
@@ -208,6 +246,30 @@ async function route(req, env, url, u) {
       if (!key.startsWith('priv/')) fail(400, 'Bad key');
       const obj = await getFile(env, key); if (!obj) fail(404, 'Not found');
       return new Response(obj.body, { headers: { 'Content-Type': obj.mime || 'application/octet-stream', 'Cache-Control': 'private, no-store' } });
+    }
+    if (p === '/admin/members' && M === 'GET') {
+      const rows = (await env.DB.prepare(`SELECT u.id, u.email, u.name AS uname, u.role, u.created_at, p.member_id, p.name, p.role_title, p.institution, p.domain, p.verified, p.listed, p.updated_at, x.avatar, x.headline,
+        (SELECT COUNT(*) FROM mposts m WHERE m.user_id = u.id AND m.deleted = 0) AS posts, (SELECT MAX(at) FROM profile_history h WHERE h.user_id = u.id) AS last_change,
+        (SELECT COUNT(*) FROM profile_history h WHERE h.user_id = u.id) AS changes
+        FROM users u LEFT JOIN profiles p ON p.user_id = u.id LEFT JOIN profile_ext x ON x.user_id = u.id ORDER BY COALESCE((SELECT MAX(at) FROM profile_history h WHERE h.user_id = u.id), u.created_at) DESC LIMIT 500`).all()).results;
+      return { members: rows };
+    }
+    if (p === '/admin/history' && M === 'GET') {
+      const uidq = url.searchParams.get('user');
+      const rows = (await env.DB.prepare(`SELECT h.at, h.changes, u.email, p.member_id FROM profile_history h JOIN users u ON u.id = h.user_id LEFT JOIN profiles p ON p.user_id = h.user_id ${uidq ? 'WHERE h.user_id = ?1' : ''} ORDER BY h.at DESC LIMIT 200`).bind(...(uidq ? [uidq] : [])).all()).results;
+      return { history: rows.map(r => ({ ...r, changes: JSON.parse(r.changes) })) };
+    }
+    if (p === '/admin/mposts' && M === 'GET') {
+      const rows = (await env.DB.prepare(`SELECT ${POST_COLS}, u.email ${POST_JOIN} ORDER BY m.created_at DESC LIMIT 200`).all()).results;
+      const ev = await evSet(rows.map(r => 'mp:' + r.id));
+      return { posts: rows.map(r => ({ ...postOut(r, ev), email: r.email, deleted: !!r.deleted })) };
+    }
+    if (p === '/admin/ev' && M === 'POST') {
+      const { target, on, note } = await body();
+      if (!/^(mp|post):[a-f0-9]{16,32}$/.test(target || '')) fail(400, 'Bad target');
+      if (on) await env.DB.prepare('INSERT OR REPLACE INTO ev_marks (target, by_email, note, at) VALUES (?1, ?2, ?3, ?4)').bind(target, u.email, clip(note, 300), now()).run();
+      else await env.DB.prepare('DELETE FROM ev_marks WHERE target = ?1').bind(target).run();
+      return { ok: true, on: !!on };
     }
     if (p === '/admin/reports' && M === 'GET') {
       const reps = (await env.DB.prepare(`SELECT r.id, r.pair, r.reason, r.created_at, u.email AS reporter FROM reports r JOIN users u ON u.id = r.reporter WHERE r.status = 'open' ORDER BY r.created_at DESC LIMIT 50`).all()).results;
@@ -479,6 +541,12 @@ async function route(req, env, url, u) {
     if (!rel.canMessage && !has) fail(403, 'Chat opens after the member accepts your request');
     const msgs = (await env.DB.prepare('SELECT id, sender, text, created_at AS at, read_at AS readAt FROM messages WHERE pair = ?1 AND deleted = 0 AND created_at > ?2 ORDER BY created_at LIMIT 300').bind(pair, after).all()).results
       .map(m => ({ id: m.id, mine: m.sender === u.id, text: m.text, at: m.at, read: !!m.readAt }));
+    if (msgs.length) {
+      const ph = msgs.map((_, i) => `?${i + 1}`).join(',');
+      const atts = (await env.DB.prepare(`SELECT id, message_id, kind, name, src FROM msg_attach WHERE message_id IN (${ph})`).bind(...msgs.map(m => m.id)).all()).results;
+      for (const m of msgs) m.attachments = atts.filter(a => a.message_id === m.id).map(a => a.kind === 'link' ? { kind: 'link', name: a.name, url: a.src }
+        : a.kind === 'drive' ? { kind: 'drive', name: a.name, id: a.src.split('|')[0], mime: a.src.split('|')[1] || '' } : { kind: a.kind, name: a.name, url: `${pubBase}/mfile/${a.id}` });
+    }
     await env.DB.prepare('UPDATE messages SET read_at = ?3 WHERE pair = ?1 AND sender != ?2 AND read_at IS NULL').bind(pair, u.id, now()).run();
     return { messages: msgs, relation: rel };
   }
@@ -487,11 +555,24 @@ async function route(req, env, url, u) {
     const t = await targetUser(seg[1]); if (!t) fail(404, 'Member not found');
     const rel = await relation(u, t);
     if (!rel.canMessage) fail(403, rel.state === 'blocked' ? 'You cannot message this member' : 'Chat opens after the member accepts your request');
-    const { text } = await body(12000);
-    const t2 = clip(text, 4000).trim(); if (!t2) fail(400, 'Empty message');
+    const { text, attachments } = await body(9e6);
+    const t2 = clip(text, 4000).trim();
+    const att = Array.isArray(attachments) ? attachments.slice(0, 6) : [];
+    if (!t2 && !att.length) fail(400, 'Empty message');
     if (screenText(t2)) fail(400, 'Looks like patient details (ID, phone, date of birth). Remove them before sending.');
+    const OK_FILE = /^(image\/(png|jpe?g|webp|gif)|application\/pdf|text\/(plain|csv)|application\/(msword|vnd\.openxmlformats-officedocument\.(wordprocessingml\.document|presentationml\.presentation|spreadsheetml\.sheet)|vnd\.ms-(excel|powerpoint)))$/;
     const id = uid();
+    const rows = [];
+    for (const [i, a] of att.entries()) {
+      if ((a.kind === 'image' || a.kind === 'file') && a.dataUrl) {
+        const mime = (String(a.dataUrl).match(/^data:([^;]+);/) || [])[1] || '';
+        if (!OK_FILE.test(mime)) fail(415, 'That file type cannot be sent. Use images, PDF, Office documents, TXT or CSV.');
+        rows.push({ kind: mime.startsWith('image/') ? 'image' : 'file', name: clip(a.name, 160), src: await putDataUrl(env, `msg/${id}/${i}`, a.dataUrl, 1.9e6) });
+      } else if (a.kind === 'drive' && /^[\w-]{10,120}$/.test(a.id || '')) rows.push({ kind: 'drive', name: clip(a.name, 160), src: a.id + '|' + clip(a.mime, 80) });
+      else if (a.kind === 'link' && /^https?:\/\//.test(a.url || '')) rows.push({ kind: 'link', name: clip(a.name || a.url, 160), src: clip(a.url, 1000) });
+    }
     await env.DB.prepare('INSERT INTO messages (id, pair, sender, text, created_at) VALUES (?1, ?2, ?3, ?4, ?5)').bind(id, pairOf(u.id, t.id), u.id, t2, now()).run();
+    for (const r of rows) await env.DB.prepare('INSERT INTO msg_attach (id, message_id, kind, name, src, size) VALUES (?1,?2,?3,?4,?5,0)').bind(uid(), id, r.kind, r.name, r.src).run();
     return { id };
   }
   if (seg[0] === 'chats' && seg[1] && seg[2] === 'report' && M === 'POST') {
@@ -506,6 +587,147 @@ async function route(req, env, url, u) {
     const m = await env.DB.prepare('SELECT sender FROM messages WHERE id = ?1').bind(seg[1]).first(); if (!m) fail(404, 'Not found');
     if (m.sender !== u.id && !u.admin) fail(403, 'Not yours');
     await env.DB.prepare('UPDATE messages SET deleted = 1 WHERE id = ?1').bind(seg[1]).run(); return { ok: true };
+  }
+
+  // ---------- profile dashboard, member posts, EV marks ----------
+  // ---------- LinkedIn-style sections + location ----------
+  const cvClean = b => {
+    const list = (arr, fields, max = 30) => (Array.isArray(arr) ? arr : []).slice(0, max).map(x => Object.fromEntries(fields.map(([k, n]) => [k, clip(x?.[k], n)]))).filter(x => Object.values(x).some(Boolean));
+    return {
+      experience: list(b.experience, [['title', 120], ['org', 160], ['place', 120], ['start', 20], ['end', 20], ['desc', 1500]]),
+      education: list(b.education, [['school', 160], ['degree', 160], ['field', 120], ['start', 20], ['end', 20], ['desc', 800]]),
+      certifications: list(b.certifications, [['name', 160], ['issuer', 160], ['date', 20], ['url', 300]]),
+      achievements: list(b.achievements, [['title', 160], ['issuer', 160], ['date', 20], ['desc', 800]]),
+      skills: (Array.isArray(b.skills) ? b.skills : []).slice(0, 50).map(s => clip(s, 60)).filter(Boolean),
+      linkedin: /^https:\/\/([a-z]{2,3}\.)?linkedin\.com\/in\/[\w%-]+\/?$/.test(b.linkedin || '') ? clip(b.linkedin, 200) : '',
+    };
+  };
+  const roundLoc = l => {
+    const lat = Number(l?.lat), lng = Number(l?.lng);
+    if (!Number.isFinite(lat) || !Number.isFinite(lng) || Math.abs(lat) > 90 || Math.abs(lng) > 180) return null;
+    return { lat: Math.round(lat * 20) / 20, lng: Math.round(lng * 20) / 20, city: clip(l.city, 80), country: clip(l.country, 60), vis: ['members', 'connections', 'private'].includes(l.vis) ? l.vis : 'connections', at: now() };
+  };
+  const cvOf = async uid2 => { const r = await env.DB.prepare('SELECT * FROM profile_cv WHERE user_id = ?1').bind(uid2).first(); if (!r) return null; const j = k => JSON.parse(r[k] || '[]'); return { experience: j('experience'), education: j('education'), certifications: j('certifications'), achievements: j('achievements'), skills: j('skills'), linkedin: r.linkedin || '', location: r.location ? JSON.parse(r.location) : null }; };
+  const canSeeLoc = async (viewer, ownerId, loc) => {
+    if (!loc) return false;
+    if (viewer && (viewer.id === ownerId || viewer.admin)) return true;
+    if (loc.vis === 'members') return !!viewer;
+    if (loc.vis === 'connections' && viewer) { const c = await env.DB.prepare(`SELECT 1 FROM connections WHERE status = 'accepted' AND ((from_user = ?1 AND to_user = ?2) OR (from_user = ?2 AND to_user = ?1))`).bind(viewer.id, ownerId).first(); return !!c; }
+    return false;
+  };
+
+  if (p === '/me/cv' && M === 'GET') { need(u); return { cv: await cvOf(u.id) || cvClean({}) }; }
+  if (p === '/me/cv' && M === 'PUT') {
+    need(u); const b = await body(400000);
+    const c = cvClean(b);
+    if (screenText(JSON.stringify(c))) fail(400, 'Remove patient-identifying details');
+    const cur = await cvOf(u.id);
+    const loc = b.location === null ? null : b.location ? roundLoc(b.location) : cur?.location || null;
+    await logHistory(u.id, cur ? { ...cur, location: cur.location ? `${cur.location.city || ''} (${cur.location.vis})` : null } : null, { ...c, location: loc ? `${loc.city || ''} (${loc.vis})` : null });
+    await env.DB.prepare(`INSERT INTO profile_cv (user_id, experience, education, certifications, achievements, skills, linkedin, location, updated_at) VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9)
+      ON CONFLICT(user_id) DO UPDATE SET experience=?2, education=?3, certifications=?4, achievements=?5, skills=?6, linkedin=?7, location=?8, updated_at=?9`)
+      .bind(u.id, JSON.stringify(c.experience), JSON.stringify(c.education), JSON.stringify(c.certifications), JSON.stringify(c.achievements), JSON.stringify(c.skills), c.linkedin, loc ? JSON.stringify(loc) : null, now()).run();
+    return { cv: { ...c, location: loc } };
+  }
+  if (p === '/map/members' && M === 'GET') {
+    // Members who shared a location the viewer is allowed to see, plus lines to the viewer's accepted connections.
+    const rows = (await env.DB.prepare(`SELECT c.user_id, c.location, p.member_id, p.name, p.role_title, p.domain, p.verified, x.avatar FROM profile_cv c JOIN profiles p ON p.user_id = c.user_id LEFT JOIN profile_ext x ON x.user_id = c.user_id WHERE c.location IS NOT NULL AND p.verified = 1 LIMIT 2000`).all()).results;
+    const conns = u ? new Set((await env.DB.prepare(`SELECT CASE WHEN from_user = ?1 THEN to_user ELSE from_user END AS other FROM connections WHERE status = 'accepted' AND (from_user = ?1 OR to_user = ?1)`).bind(u.id).all()).results.map(r => r.other)) : new Set();
+    const pts = [];
+    for (const r of rows) {
+      const loc = JSON.parse(r.location);
+      const mine = u && r.user_id === u.id;
+      const visible = mine || (u && u.admin) || (loc.vis === 'members' && u) || (loc.vis === 'connections' && conns.has(r.user_id));
+      if (!visible) continue;
+      pts.push({ id: r.member_id, name: r.name, role: r.role_title, domain: r.domain, avatar: r.avatar || null, lat: loc.lat, lng: loc.lng, city: loc.city, country: loc.country, me: !!mine, connected: conns.has(r.user_id) });
+    }
+    return { points: pts, signedIn: !!u, total: rows.length };
+  }
+
+  if (p === '/me/ext' && M === 'GET') { need(u); return { ext: await env.DB.prepare('SELECT * FROM profile_ext WHERE user_id = ?1').bind(u.id).first() || {} }; }
+  if (p === '/me/ext' && M === 'PUT') {
+    need(u); const b = await body(2.5e6);
+    for (const t of [b.headline, JSON.stringify(b.highlights || [])]) if (screenText(t)) fail(400, 'Remove patient-identifying details');
+    const cur = await env.DB.prepare('SELECT * FROM profile_ext WHERE user_id = ?1').bind(u.id).first();
+    let avatar = cur?.avatar || null;
+    if (b.avatar?.dataUrl) avatar = `${pubBase}/files/${await putDataUrl(env, `pub/avatars/${u.id}-${uid().slice(0, 6)}`, b.avatar.dataUrl, 1.2e6)}`;
+    else if (b.avatar?.drive && DRIVE_ID.test(b.avatar.drive)) avatar = `drive:${b.avatar.drive}`;
+    else if (b.avatar === null) avatar = null;
+    const website = b.website ? clip(String(b.website).trim(), 300) : '';
+    if (website && !/^https?:\/\//.test(website)) fail(400, 'Website must start with https://');
+    const niche = JSON.stringify((b.niche || []).slice(0, 12).map(x => clip(x, 40)));
+    const highlights = JSON.stringify((b.highlights || []).slice(0, 10).map(x => ({ title: clip(x.title, 24), text: clip(x.text, 800) })).filter(x => x.title));
+    const next = { avatar, headline: clip(b.headline, 160), website, niche, highlights };
+    await logHistory(u.id, cur, next);
+    await env.DB.prepare(`INSERT INTO profile_ext (user_id, avatar, headline, website, niche, highlights, updated_at) VALUES (?1,?2,?3,?4,?5,?6,?7)
+      ON CONFLICT(user_id) DO UPDATE SET avatar=?2, headline=?3, website=?4, niche=?5, highlights=?6, updated_at=?7`).bind(u.id, avatar, next.headline, website, niche, highlights, now()).run();
+    return { ext: { ...next, niche: JSON.parse(niche), highlights: JSON.parse(highlights) } };
+  }
+  if (seg[0] === 'u' && seg[1] && M === 'GET') {
+    const t = await targetUser(seg[1]); if (!t || (!t.verified && !t.admin)) fail(404, 'Member not found');
+    const prof = await env.DB.prepare('SELECT * FROM profiles WHERE user_id = ?1').bind(t.id).first() || {};
+    const ext = await env.DB.prepare('SELECT * FROM profile_ext WHERE user_id = ?1').bind(t.id).first() || {};
+    const mid = prof.member_id || 'admin';
+    const n = async (sql, ...a) => (await env.DB.prepare(sql).bind(...a).first())?.n || 0;
+    const kinds = Object.fromEntries((await env.DB.prepare('SELECT kind, COUNT(*) n FROM mposts WHERE user_id = ?1 AND deleted = 0 GROUP BY kind').bind(t.id).all()).results.map(r => [r.kind, r.n]));
+    const pubs = (await env.DB.prepare(`SELECT id, title, article_id, published_at FROM posts WHERE user_id = ?1 AND status = 'published' ORDER BY published_at DESC LIMIT 50`).bind(t.id).all()).results;
+    const posts = (await env.DB.prepare(`SELECT ${POST_COLS} ${POST_JOIN} WHERE m.user_id = ?1 AND m.deleted = 0 ORDER BY m.created_at DESC LIMIT 60`).bind(t.id).all()).results;
+    const ev = await evSet([...posts.map(r => 'mp:' + r.id), ...pubs.map(r => 'post:' + r.id)]);
+    return {
+      profile: { id: mid, name: prof.name || t.name, role: t.admin && !prof.role_title ? 'Evidara admin' : prof.role_title, institution: prof.institution, domain: prof.domain, orcid: prof.orcid, bio: prof.bio,
+        verified: !!prof.verified, admin: !!t.admin, avatar: ext.avatar || null, headline: ext.headline || '', website: ext.website || '', niche: JSON.parse(ext.niche || '[]'), highlights: JSON.parse(ext.highlights || '[]') },
+      stats: { posts: Object.values(kinds).reduce((a, b) => a + b, 0), kinds, publications: pubs.length, followers: await n('SELECT COUNT(*) n FROM follows WHERE target = ?1', 'm:' + mid),
+        following: await n('SELECT COUNT(*) n FROM follows WHERE user_id = ?1', t.id), evStars: ev.size },
+      viewer: { me: !!u && u.id === t.id, following: u ? !!(await env.DB.prepare('SELECT 1 FROM follows WHERE user_id = ?1 AND target = ?2').bind(u.id, 'm:' + mid).first()) : false },
+      publications: pubs.map(r => ({ id: r.id, title: r.title, articleId: r.article_id, at: r.published_at, ev: ev.has('post:' + r.id) })),
+      cv: await (async () => { const c = await cvOf(t.id); if (!c) return null; if (!(await canSeeLoc(u, t.id, c.location))) c.location = null; else if (c.location && !(u && (u.id === t.id || u.admin))) c.location = { city: c.location.city, country: c.location.country }; return c; })(),
+      posts: posts.map(r => postOut(r, ev)),
+    };
+  }
+  if (p === '/mposts/feed' && M === 'GET') {
+    const lim = Math.min(60, Number(url.searchParams.get('limit') || 30)); const before = url.searchParams.get('before') || '9999';
+    const rows = (await env.DB.prepare(`SELECT ${POST_COLS} ${POST_JOIN} WHERE m.deleted = 0 AND m.created_at < ?2 ORDER BY m.created_at DESC LIMIT ?1`).bind(lim, before).all()).results;
+    const ev = await evSet(rows.map(r => 'mp:' + r.id));
+    return { posts: rows.map(r => postOut(r, ev)) };
+  }
+  if (seg[0] === 'mposts' && seg[1] && seg[1] !== 'feed' && M === 'GET') {
+    const r = await env.DB.prepare(`SELECT ${POST_COLS} ${POST_JOIN} WHERE m.id = ?1 AND m.deleted = 0`).bind(seg[1]).first(); if (!r) fail(404, 'Post not found');
+    return { post: postOut(r, await evSet(['mp:' + r.id])) };
+  }
+  if (p === '/mposts' && M === 'POST') {
+    need(u, 'verified'); await rate(env, 'mpost:' + u.id, 40);
+    const b = await body(16e6);
+    const kind = ['image', 'reel', 'thought', 'review'].includes(b.kind) ? b.kind : 'thought';
+    const caption = clip(b.caption, 2200).trim();
+    if (screenText(caption) || screenText(b.paperTitle)) fail(400, 'Possible patient identifiers found. Remove them before posting.');
+    if (!b.noPatients) fail(400, 'Confirm that no patient can be identified in this post');
+    const id = uid();
+    const media = await normMedia(b.media, `pub/mposts/${id}`);
+    if (kind === 'image' && !media.length) fail(400, 'Add at least one image');
+    if (kind === 'reel' && !media.some(m => m.type === 'youtube' || (m.type === 'drive' && /^video\//.test(m.mime)))) fail(400, 'Add a video (YouTube link or a video from your Google Drive)');
+    if (kind === 'thought' && !caption) fail(400, 'Write your thought');
+    if (kind === 'review' && (!b.paperKey || !caption)) fail(400, 'Pick a study and write your review');
+    const rating = kind === 'review' ? Math.max(1, Math.min(5, Number(b.rating) || 0)) || null : null;
+    const music = normMusic(b.music);
+    const tags = JSON.stringify((b.tags || []).slice(0, 10).map(t => clip(String(t).replace(/^#/, ''), 40)).filter(Boolean));
+    await env.DB.prepare('INSERT INTO mposts (id, user_id, kind, caption, media, paper_key, paper_title, rating, music, tags, created_at) VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11)')
+      .bind(id, u.id, kind, caption, JSON.stringify(media), clip(b.paperKey, 200) || null, clip(b.paperTitle, 400) || null, rating, music ? JSON.stringify(music) : null, tags, now()).run();
+    return { id };
+  }
+  if (seg[0] === 'mposts' && seg[1] && M === 'DELETE') {
+    need(u); const r = await env.DB.prepare('SELECT user_id FROM mposts WHERE id = ?1').bind(seg[1]).first(); if (!r) fail(404, 'Not found');
+    if (r.user_id !== u.id && !u.admin) fail(403, 'Not yours');
+    await env.DB.prepare('UPDATE mposts SET deleted = 1 WHERE id = ?1').bind(seg[1]).run(); return { ok: true };
+  }
+  if (p === '/ev' && M === 'GET') { const ts = (url.searchParams.get('targets') || '').split(',').filter(Boolean).slice(0, 80); return { ev: [...await evSet(ts)] }; }
+
+  // private message attachments: only the two people in the conversation can open them
+  if (seg[0] === 'mfile' && seg[1] && M === 'GET') {
+    need(u);
+    const a = await env.DB.prepare('SELECT a.src, a.name, m.pair FROM msg_attach a JOIN messages m ON m.id = a.message_id WHERE a.id = ?1').bind(seg[1]).first();
+    if (!a || (!a.pair.split(':').includes(u.id) && !u.admin)) fail(404, 'Not found');
+    const f = await getFile(env, a.src); if (!f) fail(404, 'Not found');
+    return new Response(f.body, { headers: { 'Content-Type': f.mime || 'application/octet-stream', 'Content-Disposition': `inline; filename="${String(a.name || 'file').replace(/[^\w.\- ]/g, '_')}"`, 'Cache-Control': 'private, no-store', 'X-Content-Type-Options': 'nosniff' } });
   }
 
   // AI image

@@ -6,6 +6,7 @@ import { icon } from './icons.js';
 import * as Vid from './video.js';
 import * as Lib from './library.js';
 import { updateQuotaLine, bloomSVG } from './core.js';
+import { pickVoices, voicePref } from './podcast.js';
 
 const SPEEDS = [0.75, 1, 1.25, 1.5, 2];
 
@@ -43,7 +44,9 @@ export function videoPlayer({ title, slides, aspect = '16:9', baseMs = 5000, dow
   function speak(text, done) {
     try {
       speechSynthesis.cancel();
-      const u = new SpeechSynthesisUtterance(text); u.rate = speed;
+      const u = new SpeechSynthesisUtterance(text); u.rate = speed * 0.96;
+      const v = pickVoices(); const pref = voicePref(); const voice = pref === 'device' ? null : pref === 'male' ? v.male : v.female;
+      if (voice) { u.voice = voice; u.lang = voice.lang; }
       u.onend = done; u.onerror = done; speechSynthesis.speak(u);
     } catch { done(); }
   }

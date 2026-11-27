@@ -18,10 +18,30 @@ export const onChange = fn => (listeners.add(fn), () => listeners.delete(fn));
 const emit = () => { render(); listeners.forEach(fn => { try { fn(S); } catch {} }); };
 export const state = () => S;
 
+// ---------- voices: Indian English first, female + male hosts ----------
+// Uses the device's built-in voices (instant, free, offline). Windows: Heera / Neerja / Ravi / Prabhat (en-IN);
+// Android / Chrome: "English (India)". Falls back to the best English voice when no Indian voice is installed.
+const FEMALE = /heera|neerja|swara|kalpana|veena|isha|aditi|raveena|priya|female|woman|zira|aria|jenny|samantha|google.*(uk english female|us english)/i;
+const MALE = /ravi|prabhat|hemant|madhur|kunal|male|man\b|david|guy|ryan|george|google uk english male/i;
+export const VOICE_PREFS = { both: 'Indian · female + male', female: 'Indian · female', male: 'Indian · male', device: 'Device default' };
+export const voicePref = () => store.get('voicePref', 'both');
+export function pickVoices() {
+  let vs = []; try { vs = speechSynthesis.getVoices(); } catch {}
+  const en = vs.filter(v => /^en/i.test(v.lang));
+  const india = en.filter(v => /en[-_]IN/i.test(v.lang) || /india/i.test(v.name));
+  const pool = india.length ? india : en;
+  const natural = v => (/natural|neural|online/i.test(v.name) ? 2 : 0) + (v.localService ? 0 : 1); // prefer the smoother neural voices
+  const sorted = [...pool].sort((x, y) => natural(y) - natural(x));
+  const fem = sorted.find(v => FEMALE.test(v.name)), mal = sorted.find(v => MALE.test(v.name));
+  const any = sorted[0] || en[0] || vs[0] || null;
+  return { female: fem || any, male: mal || sorted.find(v => v !== (fem || any)) || any, indian: india.length > 0, sameVoice: !(fem && mal) };
+}
 function voicesAB() {
-  const vs = Audio.voices();
-  const pref = store.get('voices', {});
-  return [vs.find(v => v.name === pref.a) || vs[0], vs.find(v => v.name === pref.b) || vs.find(v => v !== vs[0]) || vs[0]];
+  const pref = voicePref(), v = pickVoices();
+  if (pref === 'device') return [null, null, v];
+  if (pref === 'female') return [v.female, v.female, v];
+  if (pref === 'male') return [v.male, v.male, v];
+  return [v.female, v.male, v];
 }
 const words = t => (t.match(/\S+/g) || []).length;
 const lineSecs = l => (words(l.t) / 2.6) / S.rate; // ~156 words per minute at 1x
@@ -75,11 +95,22 @@ function speak(token) {
     return;
   }
   const ln = ep.lines[S.line];
-  const [va, vb] = voicesAB();
+  const [va, vb, info] = voicesAB();
   const u = new SpeechSynthesisUtterance(ln.t);
-  if (va) u.voice = ln.who === 'B' ? vb : va;
-  u.rate = S.rate; u.pitch = ln.who === 'B' ? 0.92 : 1.02;
-  u.onend = () => { if (token !== S.token) return; S.line++; emit(); speak(token); };
+  const isB = ln.who === 'B';
+  if (va || vb) u.voice = isB ? (vb || va) : (va || vb);
+  if (u.voice) u.lang = u.voice.lang;
+  // Humanised delivery: a warmer, slightly slower pace; findings and conclusions land a touch slower;
+  // a tiny natural variation line to line; if only one voice exists, pitch separates the two hosts.
+  const key = /result|finding|conclusion|limitation/i.test(ln.src || '');
+  const vary = ((S.line * 37) % 7 - 3) / 100;
+  u.rate = Math.max(0.5, S.rate * (key ? 0.9 : 0.96) * (1 + vary / 2));
+  const samePitch = info?.sameVoice && voicePref() === 'both';
+  u.pitch = Math.max(0.6, Math.min(1.4, (isB ? (samePitch ? 0.86 : 0.98) : (samePitch ? 1.12 : 1.04)) + vary));
+  u.volume = 1;
+  const next = ep.lines[S.line + 1];
+  const pause = !next ? 0 : next.who !== ln.who ? 520 : /[.?!]$/.test(ln.t) ? 260 : 120;
+  u.onend = () => { if (token !== S.token) return; S.line++; emit(); setTimeout(() => speak(token), pause); };
   u.onerror = e => { if (token !== S.token || e.error === 'interrupted' || e.error === 'canceled') return; S.line++; speak(token); };
   emit();
   speechSynthesis.speak(u);
@@ -162,6 +193,7 @@ function render() {
         h('div', { class: 'pl-time' }, h('span', {}, fmt(done)), prog, h('span', {}, fmt(total)))),
       h('div', { class: 'pl-right' },
         h('button', { class: 'pbtn rate', type: 'button', 'aria-label': 'Playback speed', onclick: cycleRate }, `${S.rate}×`),
+        h('button', { class: 'pbtn rate vbtn', type: 'button', title: 'Voice', 'aria-label': 'Voice', onclick: () => { const ks = Object.keys(VOICE_PREFS); const nx = ks[(ks.indexOf(voicePref()) + 1) % ks.length]; store.set('voicePref', nx); toast(`Voice: ${VOICE_PREFS[nx]}${pickVoices().indian || nx === 'device' ? '' : ' (no Indian voice on this device; using the closest English voice)'}`); if (S.playing) start(); else render(); } }, voicePref() === 'device' ? '🔊' : voicePref() === 'female' ? '🇮🇳 F' : voicePref() === 'male' ? '🇮🇳 M' : '🇮🇳 F+M'),
         btn('queue', 'Queue', () => { S.showQueue = !S.showQueue; render(); }, S.showQueue ? 'on' : ''),
         btn('close', 'Close player', () => { pause(); S.queue = []; S.idx = -1; emit(); }))));
 }

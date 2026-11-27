@@ -148,6 +148,7 @@ export const FEEDS = [
   { id: 'india', name: 'India focus', how: 'Papers with an Indian affiliation in your domains, newest first' },
   { id: 'top', name: 'Top liked', how: 'Most liked by Evidara members in the last 7 days' },
   { id: 'liked', name: 'Liked', how: 'Papers you liked' },
+  { id: 'members', name: 'Members', how: 'Latest posts, reels, thoughts and study reviews from verified members' },
   { id: 'community', name: 'Community', how: 'Posts published on Evidara after admin verification' },
 ];
 
@@ -231,7 +232,7 @@ export async function explore() {
     if (reset) { cursor = '*'; done = false; count = 0; reelBuf = []; list.replaceChildren(...[1, 2, 3].map(() => h('div', { class: 'pcard skeleton' }))); }
     busy = true; sentinel.hidden = false;
     try {
-      if (['liked', 'community', 'top'].includes(st.tab)) { await loadLocal(st.tab, my); return; }
+      if (['liked', 'community', 'top', 'members'].includes(st.tab)) { await loadLocal(st.tab, my); return; }
       const fq = feedQuery(st, st.feeds);
       let raw = fq.raw || '';
       if (!['mustread', 'gems'].includes(st.tab)) raw += DESIGN_Q[st.design] || '';
@@ -258,7 +259,15 @@ export async function explore() {
   }
   async function loadLocal(kind, my) {
     done = true;
-    if (kind === 'top') {
+    if (kind === 'members') {
+      if (!online()) { list.replaceChildren(h('div', { class: 'empty' }, 'Member posts appear when Evidara accounts are connected.')); status.textContent = ''; return; }
+      const { memberPostCard } = await import('./profiledash.js');
+      const ps = (await api('/mposts/feed?limit=40')).posts || [];
+      if (my !== gen) return;
+      status.textContent = `${ps.length} recent member posts`;
+      list.replaceChildren(...(ps.length ? ps.map(memberPostCard) : [h('div', { class: 'empty' }, 'No member posts yet. Verified members can post from their profile.')]));
+      refreshLikeCounts(list);
+    } else if (kind === 'top') {
       if (!online()) { list.replaceChildren(h('div', { class: 'empty' }, 'Community likes appear when Evidara accounts are connected.')); status.textContent = ''; return; }
       const top = ((await api('/likes/top?days=7')).top || []).filter(t => !t.key.startsWith('post:')).slice(0, 20);
       if (my !== gen) return;

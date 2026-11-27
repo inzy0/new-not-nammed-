@@ -64,3 +64,29 @@ CREATE INDEX IF NOT EXISTS msg_pair ON messages (pair, created_at);
 CREATE TABLE IF NOT EXISTS reports (
   id TEXT PRIMARY KEY, reporter TEXT NOT NULL, pair TEXT NOT NULL, reason TEXT, created_at TEXT NOT NULL, status TEXT NOT NULL DEFAULT 'open'
 );
+-- Profile dashboard, member posts, EV marks, change history, message attachments
+CREATE TABLE IF NOT EXISTS profile_ext (
+  user_id TEXT PRIMARY KEY, avatar TEXT, headline TEXT, website TEXT, niche TEXT, highlights TEXT, updated_at TEXT
+);
+CREATE TABLE IF NOT EXISTS profile_history (
+  id TEXT PRIMARY KEY, user_id TEXT NOT NULL, changes TEXT NOT NULL, at TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS ph_user ON profile_history (user_id, at);
+CREATE TABLE IF NOT EXISTS mposts (
+  id TEXT PRIMARY KEY, user_id TEXT NOT NULL, kind TEXT NOT NULL, caption TEXT, media TEXT NOT NULL DEFAULT '[]',
+  paper_key TEXT, paper_title TEXT, rating INTEGER, music TEXT, tags TEXT, created_at TEXT NOT NULL, deleted INTEGER NOT NULL DEFAULT 0
+);
+CREATE INDEX IF NOT EXISTS mposts_user ON mposts (user_id, created_at);
+CREATE INDEX IF NOT EXISTS mposts_time ON mposts (created_at);
+CREATE TABLE IF NOT EXISTS ev_marks (
+  target TEXT PRIMARY KEY, by_email TEXT, note TEXT, at TEXT NOT NULL
+);
+CREATE TABLE IF NOT EXISTS msg_attach (
+  id TEXT PRIMARY KEY, message_id TEXT NOT NULL, kind TEXT NOT NULL, name TEXT, src TEXT NOT NULL, size INTEGER
+);
+CREATE INDEX IF NOT EXISTS msg_attach_msg ON msg_attach (message_id);
+-- LinkedIn-style profile sections + one-time location
+CREATE TABLE IF NOT EXISTS profile_cv (
+  user_id TEXT PRIMARY KEY, experience TEXT, education TEXT, certifications TEXT, achievements TEXT, skills TEXT,
+  linkedin TEXT, location TEXT, updated_at TEXT
+);
